@@ -444,6 +444,34 @@ end
 
 -- Wheel-scrolled area: no Blizzard scroll template, just a child frame we shift
 -- plus a thin position indicator on the right edge.
+-- Dropdown lists close when you click away from them.
+--
+-- There is no "clicked anywhere" event, so the only way to see a click that lands
+-- outside a frame is to put something under it that can be clicked. This is a full
+-- screen button, shown and hidden with the list.
+--
+-- It deliberately swallows the click that dismisses: first click closes, second one
+-- acts. Every dropdown in the game behaves that way, including Blizzard's own.
+--
+-- Frame levels are set on each show rather than once, because a list gets reparented
+-- and re-anchored as it moves between buttons, and that rewrites its level.
+local function CloseOnOutsideClick(popup)
+    local catcher = CreateFrame("Button", nil, UIParent)
+    catcher:SetAllPoints(UIParent)
+    catcher:RegisterForClicks("AnyUp")
+    catcher:Hide()
+    catcher:SetScript("OnClick", function() popup:Hide() end)
+
+    popup:HookScript("OnShow", function(self)
+        catcher:SetFrameStrata(self:GetFrameStrata())
+        catcher:SetFrameLevel(110)
+        self:SetFrameLevel(120)
+        catcher:Show()
+    end)
+    popup:HookScript("OnHide", function() catcher:Hide() end)
+    return popup
+end
+
 local function ScrollArea(parent)
     local scroll = CreateFrame("ScrollFrame", nil, parent)
     local content = CreateFrame("Frame", nil, scroll)
@@ -451,15 +479,46 @@ local function ScrollArea(parent)
     scroll:SetScrollChild(content)
     scroll.content = content
 
-    local track = scroll:CreateTexture(nil, "ARTWORK")
+    -- Frames, not textures. The bar used to be two textures, and a texture cannot
+    -- take mouse input - so it showed you where you were and gave you no way to act
+    -- on it. On a long list that left the wheel as the only option.
+    --
+    -- BAR_W is the grab area and is wider than the 3px line you can see: a 3px
+    -- target is not something anybody can reliably hit. It overlaps the right edge of
+    -- the rows underneath, which is why it is hidden outright when everything fits -
+    -- an invisible strip that eats row clicks would be worse than no bar at all.
+    local BAR_W = 9
+
+    local bar = CreateFrame("Frame", nil, scroll)
+    bar:SetPoint("TOPRIGHT", 0, 0)
+    bar:SetPoint("BOTTOMRIGHT", 0, 0)
+    bar:SetWidth(BAR_W)
+    bar:EnableMouse(true)
+
+    local track = bar:CreateTexture(nil, "ARTWORK")
     track:SetPoint("TOPRIGHT", 0, 0)
     track:SetPoint("BOTTOMRIGHT", 0, 0)
     track:SetWidth(3)
     track:SetColorTexture(1, 1, 1, 0.05)
 
-    local thumb = scroll:CreateTexture(nil, "OVERLAY")
-    thumb:SetWidth(3)
-    thumb:SetColorTexture(unpack(C.accent))
+    local thumb = CreateFrame("Frame", nil, bar)
+    thumb:SetWidth(BAR_W)
+    thumb:EnableMouse(true)
+    local thumbTex = thumb:CreateTexture(nil, "OVERLAY")
+    thumbTex:SetPoint("TOPRIGHT", 0, 0)
+    thumbTex:SetPoint("BOTTOMRIGHT", 0, 0)
+    thumbTex:SetWidth(3)
+    thumbTex:SetColorTexture(unpack(C.accent))
+
+    local function MaxScroll()
+        return math.max(0, (content:GetHeight() or 1) - (scroll:GetHeight() or 1))
+    end
+
+    local function ScrollTo(value)
+        local maxScrol = MaxScroll()
+        scroll:SetVerticalScroll(math.max(0, math.min(maxScrol, value)))
+        scroll:UpdateBar()
+    end
 
     function scroll:UpdateBar()
         local viewH    = self:GetHeight() or 1
@@ -467,18 +526,83 @@ local function ScrollArea(parent)
         local maxScrol = math.max(0, totalH - viewH)
         if self:GetVerticalScroll() > maxScrol then self:SetVerticalScroll(maxScrol) end
         if maxScrol <= 0 then
-            track:Hide(); thumb:Hide()
+            bar:Hide()
             return
         end
-        track:Show(); thumb:Show()
+        bar:Show()
         local frac   = math.min(1, viewH / totalH)
         local thumbH = math.max(20, viewH * frac)
         local travel = viewH - thumbH
         local pos    = (self:GetVerticalScroll() / maxScrol) * travel
         thumb:SetHeight(thumbH)
         thumb:ClearAllPoints()
-        thumb:SetPoint("TOPRIGHT", self, "TOPRIGHT", 0, -pos)
+        thumb:SetPoint("TOPRIGHT", bar, "TOPRIGHT", 0, -pos)
+        -- Kept for the drag maths below, which needs the travel distance and cannot
+        -- recompute it from a frame mid-drag without fighting its own SetPoint.
+        self.thumbTravel = travel
     end
+
+    -- Cursor position comes back in screen pixels at the *root* scale, so it has to
+    -- be divided by the frame's effective scale before it can be compared with
+    -- anything measured off the frame itself. Skipping that makes dragging track the
+    -- cursor at the wrong speed on any UI scale other than 1.
+    local function CursorY()
+        local _, y = GetCursorPosition()
+        return y / (thumb:GetEffectiveScale() or 1)
+    end
+
+    local function OnDrag(self)
+        local travel = scroll.thumbTravel or 0
+        if travel <= 0 then return end
+        -- Cursor down is a decreasing y, and scrolling down is an increasing scroll
+        -- value, hence grab minus now rather than the other way round.
+        local delta = (self.grabY - CursorY()) * (MaxScroll() / travel)
+        ScrollTo(self.grabScroll + delta)
+    end
+
+    thumb:SetScript("OnMouseDown", function(self)
+        self.grabY      = CursorY()
+        self.grabScroll = scroll:GetVerticalScroll()
+        thumbTex:SetColorTexture(1, 1, 1, 0.9)
+        self:SetScript("OnUpdate", OnDrag)
+    end)
+    -- OnHide as well as OnMouseUp: releasing the button outside the frame does not
+    -- always deliver OnMouseUp, and an OnUpdate left running would drag the list
+    -- around with the cursor forever.
+    local function EndDrag(self)
+        self:SetScript("OnUpdate", nil)
+        thumbTex:SetColorTexture(unpack(C.accent))
+    end
+    thumb:SetScript("OnMouseUp", EndDrag)
+    thumb:SetScript("OnHide", EndDrag)
+
+    -- Clicking the track pages toward the click rather than jumping to it. A jump
+    -- would be a guess at where in the list that pixel means; a page is the same
+    -- thing the wheel does, only faster.
+    bar:SetScript("OnMouseDown", function(self)
+        local viewH = scroll:GetHeight() or 1
+        local top   = thumb:GetTop()
+        local bot   = thumb:GetBottom()
+        local y     = CursorY()
+        if top and bot and y <= top and y >= bot then return end   -- on the thumb
+        ScrollTo(scroll:GetVerticalScroll() + ((top and y > top) and -viewH or viewH))
+    end)
+
+-- If the content frame is still sitting at zero when the scroll frame gets its
+    -- real size, give it that size. A frame positioned by anchors measures 0 until a
+    -- layout pass has run, so a caller that sized its content from scroll:GetWidth()
+    -- on the very first call built every row zero-wide - which is the "the list is
+    -- empty until I click a second time" bug, and it has now been found three times.
+    --
+    -- Only when it is zero: several callers set a deliberate width, and clobbering
+    -- those would trade this bug for a layout one. Rows are anchored to the content's
+    -- edges, so they take the corrected width with them.
+    scroll:SetScript("OnSizeChanged", function(self)
+        if (self.content:GetWidth() or 0) <= 1 then
+            self.content:SetWidth(self:GetWidth() or 0)
+        end
+        if self.UpdateBar then self:UpdateBar() end
+    end)
 
     scroll:EnableMouseWheel(true)
     scroll:SetScript("OnMouseWheel", function(self, delta)
@@ -510,7 +634,7 @@ local function ToggleNamePicker(parent, anchorTo, names, onPick)
     end
 
     if not namePopup then
-        namePopup = CreateFrame("Frame", nil, parent)
+        namePopup = CreateFrame("Frame", nil, UIParent)
         namePopup:SetSize(200, 200)
         namePopup:SetFrameStrata("FULLSCREEN_DIALOG")
         namePopup:SetToplevel(true)
@@ -528,8 +652,8 @@ local function ToggleNamePicker(parent, anchorTo, names, onPick)
         namePopup.scroll:SetPoint("TOPLEFT", 5, -5)
         namePopup.scroll:SetPoint("BOTTOMRIGHT", -5, 5)
         namePopup.rows = {}
+        CloseOnOutsideClick(namePopup)
     end
-    namePopup:SetParent(parent)
 
     local content = namePopup.scroll.content
     content:SetWidth(namePopup:GetWidth() - 10)
@@ -666,6 +790,7 @@ local function ToggleMediaPicker(kind, anchorTo, current, onPick)
         mediaPopup.scroll:SetPoint("TOPLEFT", 5, -5)
         mediaPopup.scroll:SetPoint("BOTTOMRIGHT", -5, 5)
         mediaPopup.rows = {}
+        CloseOnOutsideClick(mediaPopup)
     end
 
     mediaPopup.kind     = kind
@@ -673,7 +798,12 @@ local function ToggleMediaPicker(kind, anchorTo, current, onPick)
 
     local entries = (kind == "font") and NCB.FontList() or NCB.TextureList()
     local content = mediaPopup.scroll.content
-    content:SetWidth(mediaPopup.scroll:GetWidth())
+    -- Width from the popup's own SetSize, NOT from scroll:GetWidth(). The scroll is
+    -- positioned by anchors, so on the very first call - the frame having been created
+    -- microseconds earlier with no layout pass yet - it measures 0, every row is built
+    -- zero-wide, and the list looks empty until you click a second time. The same bug
+    -- was fixed in the other pickers and this one was missed.
+    content:SetWidth(mediaPopup:GetWidth() - 10)
 
     for index, entry in ipairs(entries) do
         local row = mediaPopup.rows[index]

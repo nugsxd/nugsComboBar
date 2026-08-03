@@ -1,4 +1,24 @@
 # Changelog
+
+## 0.4.4
+
+- **The scroll bar can be grabbed and dragged.** It was drawn as a texture, and a
+  texture cannot take mouse input at all - so it showed you where you were in a list
+  and gave you no way to act on it, leaving the wheel as the only way down a long one.
+  It is a real bar now: drag the thumb, or click the track to page toward the click.
+  The wheel still works exactly as before.
+- **Fixed: the font and bar-texture lists came up empty on the first click** and only
+  filled in on the second. Their rows were sized from the scroll frame, which is
+  positioned by anchors and so measures zero until a layout pass has run - every row
+  was built zero-wide. The scroll helper now repairs a zero-width list itself rather
+  than relying on each list to size itself correctly.
+- **Lists close when you click away from them.** They stayed open until something was
+  selected or the button was pressed again.
+- **Fixed: a list could be cut off at the edge of the panel it opened from.** It was
+  attached to whichever frame its button sat in, and when that was a scrolling pane the
+  list was clipped by it - a scroll frame clips its children. Lists now hang off the
+  screen itself, so they overhang the window instead of being cut in half.
+
 ## 0.4.3
 
 - **Fixed: the settings window twitched the first time it was dragged.** It is
