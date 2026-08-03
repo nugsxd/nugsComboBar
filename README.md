@@ -6,7 +6,7 @@ Combo points, holy power, chi, soul shards, arcane charges, runes and essence �
 plus the resources 12.0 moved off the power system entirely — drawn as configurable
 pips on a single draggable anchor.
 
-Retail only (Interface 120007). Slash command: **`/ncombo`**.
+Retail only (Interface 120007). Slash command: **`/ncb`**.
 
 ## What it draws
 
@@ -23,11 +23,12 @@ Retail only (Interface 120007). Slash command: **`/ncombo`**.
 | Enhancement Shaman | Maelstrom Weapon |
 | Survival Hunter | Tip of the Spear |
 | Vengeance Demon Hunter | Soul Fragments |
+| Devourer Demon Hunter | Souls — Dark Heart stacks, switching to Silence the Whispers during Void Metamorphosis |
 | Brewmaster Monk | Stagger, as its own bar under the pips |
 
 ## Options
 
-`/ncombo` opens the settings window. Four tabs:
+`/ncb` opens the settings window. Four tabs:
 
 - **General** — master switch, position, scale, when to show the pips, minimap button.
 - **Appearance** — pip shape, size, spacing, fill order, texture, borders, empty-pip
@@ -53,19 +54,19 @@ Either, both or neither.
 ## Commands
 
 ```
-/ncombo             open the options window
-/ncombo unlock      show a grab handle and drag the row into place
-/ncombo lock        put it back
-/ncombo test        cycle the pips so you can judge the look
-/ncombo on | off    master switch
-/ncombo reset       back to the shipped look and position
-/ncombo diag        report what the addon can see for your spec
-/ncombo minimap     show or hide the minimap button
+/ncb             open the options window
+/ncb unlock      show a grab handle and drag the row into place
+/ncb lock        put it back
+/ncb test        cycle the pips so you can judge the look
+/ncb on | off    master switch
+/ncb reset       back to the shipped look and position
+/ncb diag        report what the addon can see for your spec
+/ncb minimap     show or hide the minimap button
 ```
 
 ## Notes on 12.0
 
-Two things about this patch shape the addon, and `/ncombo diag` will tell you which
+Two things about this patch shape the addon, and `/ncb diag` will tell you which
 one you are looking at.
 
 **A class resource is no longer just a power type.** Maelstrom Weapon, Icicles and

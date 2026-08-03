@@ -82,7 +82,7 @@ function NCB.InitMinimap()
 
     btn:SetScript("OnClick", function(_, button)
         if button == "RightButton" then
-            NCB.Display:SetLocked(not NCB.db.locked)
+            NCB.Display:ToggleLock(not NCB.db.locked)
         else
             NCB.ToggleOptions()
         end

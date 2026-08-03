@@ -32,6 +32,9 @@ local GetSpecialization = (C_SpecializationInfo and C_SpecializationInfo.GetSpec
                           or _G.GetSpecialization
 local GetPlayerAuraBySpellID = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID
 local GetSpellCastCount      = C_Spell and C_Spell.GetSpellCastCount
+local GetSpellMaxCumulativeAuraApplications =
+      C_Spell and C_Spell.GetSpellMaxCumulativeAuraApplications
+local GetCollapsingStarCost  = _G.GetCollapsingStarCost
 local GetUnitChargedPowerPoints = _G.GetUnitChargedPowerPoints
 local GetShapeshiftFormID    = _G.GetShapeshiftFormID
 
@@ -50,6 +53,7 @@ local SPEC = {
     SHAMAN_ENHANCE   = 2,
     HUNTER_SURVIVAL  = 3,
     DH_VENGEANCE     = 2,
+    DH_DEVOURER      = 3,
     WARLOCK_DESTRO   = 3,
     EVOKER_AUGMENT   = 3,
 }
@@ -62,6 +66,13 @@ local SPELL_MAELSTROM   = 344179
 local SPELL_ICICLES     = 205473
 local SPELL_SPEAR_TIP   = 260286
 local SPELL_SOUL_CLEAVE = 228477
+
+-- Devourer. Its souls are Dark Heart stacks, except while Void Metamorphosis is up,
+-- when the stacks live on Silence the Whispers instead - so the aura being counted
+-- changes mid-fight, and so does the cap.
+local SPELL_DARK_HEART        = 1225789
+local SPELL_SILENCE_WHISPERS  = 1227702
+local SPELL_VOID_METAMORPHOSIS = 1217607
 
 --------------------------------------------------------------------------------
 -- Readers
@@ -89,6 +100,46 @@ local function AuraValue(res)
     if not ok or not aura then return 0 end
     return aura.applications or 0
 end
+
+-- Devourer souls. Which aura carries the stacks depends on whether Void
+-- Metamorphosis is up, so the aura is chosen first and read second.
+local function DevourerAura()
+    if not GetPlayerAuraBySpellID then return SPELL_DARK_HEART, false end
+    local ok, meta = pcall(GetPlayerAuraBySpellID, SPELL_VOID_METAMORPHOSIS)
+    -- A secret aura table is still safe to truth-test; only its fields are barred.
+    if ok and meta then return SPELL_SILENCE_WHISPERS, true end
+    return SPELL_DARK_HEART, false
+end
+
+local function DevourerValue()
+    if not GetPlayerAuraBySpellID then return 0 end
+    local spellID = DevourerAura()
+    local ok, aura = pcall(GetPlayerAuraBySpellID, spellID)
+    if not ok or not aura then return 0 end
+    return aura.applications or 0
+end
+
+-- The cap is not a constant. Normally it is Dark Heart's own maximum stack count;
+-- during Void Metamorphosis it is whatever Collapsing Star currently costs. Either
+-- can come back secret or missing, so the last good answer is kept.
+local lastDevourerCap
+local function DevourerCap()
+    local _, inMeta = DevourerAura()
+    local value
+    if inMeta and GetCollapsingStarCost then
+        local ok, v = pcall(GetCollapsingStarCost)
+        if ok then value = Plain(v) end
+    elseif GetSpellMaxCumulativeAuraApplications then
+        local ok, v = pcall(GetSpellMaxCumulativeAuraApplications, SPELL_DARK_HEART)
+        if ok then value = Plain(v) end
+    end
+    if value and value > 0 then
+        lastDevourerCap = math.floor(value)
+        return lastDevourerCap
+    end
+    return lastDevourerCap or 5
+end
+NCB.DevourerCap = DevourerCap
 
 local function CastCountValue(res)
     if not GetSpellCastCount then return 0 end
@@ -200,7 +251,21 @@ NCB.RESOURCES = {
         color = { 0.72, 0.34, 0.86 },
         events = { "SPELL_UPDATE_CHARGES" },
     },
+    {
+        -- Devourer. `dynamic` means the pip count and the scale are recomputed on
+        -- every value change rather than only on a spec change, because entering
+        -- Void Metamorphosis moves the stacks to a different aura AND changes the cap.
+        key = "devourerSouls", label = "Souls (Devourer)", short = "Souls",
+        Value = DevourerValue, aura = true, dynamic = true,
+        Cap = DevourerCap,
+        max = 5, hardMax = 5, extra = true,
+        color = { 0.55, 0.28, 0.72 },
+    },
 }
+
+-- Above this, a row of pips stops being readable and the resource is drawn as one
+-- pip that fills like a bar instead. Only Devourer can reach it.
+NCB.PIP_LIMIT = 10
 
 function NCB.ResourceByKey(key)
     for _, res in ipairs(NCB.RESOURCES) do
@@ -251,7 +316,9 @@ local function ResolveKey(class, spec)
         return (spec == SPEC.HUNTER_SURVIVAL) and "spearTip" or nil
 
     elseif class == "DEMONHUNTER" then
-        return (spec == SPEC.DH_VENGEANCE) and "soulCleave" or nil
+        if spec == SPEC.DH_VENGEANCE then return "soulCleave" end
+        if spec == SPEC.DH_DEVOURER  then return "devourerSouls" end
+        return nil
     end
     return nil
 end
@@ -273,8 +340,24 @@ Resources.staggerShown = false
 -- count it had a moment ago.
 local lastGoodMax = {}
 
+-- Pip count and scale together, because for a dynamic resource they trade off:
+-- a cap small enough to read gets one pip each, and a larger one collapses to a
+-- single pip that fills like a bar (scale = the whole cap).
+local function PipShape(res)
+    if not res then return 0, 1 end
+    if res.Cap then
+        local cap = res.Cap()
+        if cap <= NCB.PIP_LIMIT then return cap, 1 end
+        return 1, cap
+    end
+    return nil, res.scale or 1
+end
+
 local function PipCount(res)
     if not res then return 0 end
+
+    local dynamic = PipShape(res)
+    if dynamic then return dynamic end
 
     -- Talents raise the combo point cap, and the choice is whether that adds pips
     -- or squeezes the ones already there. Adding them is the default; capping at
@@ -310,6 +393,9 @@ function Resources:Detect()
 
     self.active  = res
     self.maxPips = PipCount(res)
+    -- How many raw units one pip spans. Static for everything except Devourer.
+    local _, scale = PipShape(res)
+    self.scale = scale or 1
 
     -- Brewmaster's Stagger rides alongside whatever else is on screen, so it is
     -- resolved separately rather than competing for the one resource slot.
@@ -317,6 +403,12 @@ function Resources:Detect()
                          and NCB.db and NCB.db.extras.stagger and UnitStagger ~= nil) or false
 
     return res
+end
+
+-- How many raw units one pip spans. Everything that draws must go through this
+-- rather than reading res.scale, because for Devourer it changes mid-fight.
+function Resources:Scale()
+    return self.scale or (self.active and self.active.scale) or 1
 end
 
 -- The number the pips are fed. May be secret; that is the whole point of the pip
@@ -451,7 +543,14 @@ function Resources:Init()
         if SHAPE_EVENTS[event] or event == "PLAYER_REGEN_ENABLED" then
             Resources:Refresh()
         elseif VALUE_EVENTS[event] then
-            NCB.Display:Update()
+            -- A dynamic resource can change how many pips it needs on the same event
+            -- that changes its value, so it re-resolves rather than just redrawing.
+            -- Refresh only rebuilds when something actually moved.
+            if Resources.active and Resources.active.dynamic then
+                Resources:Refresh()
+            else
+                NCB.Display:Update()
+            end
         else
             -- vehicle and pet battle transitions: visibility only
             NCB.Display:UpdateVisibility()
@@ -461,11 +560,13 @@ end
 
 -- Re-resolve which resource is active and rebuild the pips if the answer changed.
 function Resources:Refresh()
-    local before, beforeMax = self.active, self.maxPips
+    local before, beforeMax, beforeScale = self.active, self.maxPips, self.scale
     self:Detect()
     self:ApplyBlizzardVisibility()
 
-    if self.active ~= before or self.maxPips ~= beforeMax then
+    -- Scale is in the comparison for Devourer: entering Void Metamorphosis changes
+    -- the cap without changing the resource, and the pips have to be re-ranged.
+    if self.active ~= before or self.maxPips ~= beforeMax or self.scale ~= beforeScale then
         NCB.Display:Rebuild()
     else
         NCB.Display:Update()
@@ -496,6 +597,15 @@ function NCB.Diagnostics()
         end
         print(("  source: %s"):format(
             res.aura and "buff stacks" or res.castCount and "cast count" or "power type"))
+        if res.Cap then
+            -- Devourer's cap is not a constant and I could not verify it offline, so
+            -- it is reported rather than assumed.
+            local cap = res.Cap()
+            print(("  cap: |cffffd479%d|r  scale: |cffffd479%d|r per pip  %s")
+                :format(cap, Resources:Scale(),
+                        cap > NCB.PIP_LIMIT and "|cff8cd2ff(drawn as one filling bar)|r"
+                        or "(one pip each)"))
+        end
     end
 
     print(("  stagger bar: %s"):format(Resources.staggerShown and "on" or "off"))

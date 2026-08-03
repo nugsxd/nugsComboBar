@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.4.6
+
+- **Devourer souls are now tracked.** It is the only resource here that changes
+  shape mid-fight, so it needed three things nothing else did:
+  - The stacks live on **Dark Heart**, except during **Void Metamorphosis**, when
+    they move to **Silence the Whispers**. The aura is chosen before it is read.
+  - The cap is not a constant — normally Dark Heart's own maximum stack count, and
+    during Void Metamorphosis whatever Collapsing Star currently costs. Either can
+    come back secret, so the last good answer is kept rather than collapsing to zero.
+  - Because the cap moves, the pip count is re-resolved on value events rather than
+    only on a spec change, and a redraw only happens when something actually changed.
+- A cap of 10 or fewer draws one pip each; anything larger collapses to a single pip
+  that fills like a bar, because thirty pips in a row is not a readable display.
+- `/ncombo diag` reports the live cap and which of the two layouts is in use.
+
+## 0.4.5
+
+- **The settings window gets out of the way while you place the resource bar.** Unlocking
+  hides it and puts up a small bar instead - Lock bar and Demo - and locking brings the
+  window back exactly where it was. Placing things meant dragging boxes the window was
+  usually sitting on top of, so it had to be shoved aside and dragged back every time.
+- The bar can be dragged if it is in the way, and Escape locks rather than just
+  dismissing it - hiding it while things were still unlocked would have left nothing on
+  screen to end that state.
+- `/ncb unlock` puts the bar up too. If the settings window was not open when you
+  unlocked, locking does not conjure one.
+- **Fixed: a dropdown could run off the bottom of a smaller screen.** Four of them
+  dropped straight down from their button with no check that there was room below and
+  no clamping, while the lists beside them already handled it. They now open upwards
+  when there is no room, and are clamped as a backstop - clamping alone would slide a
+  list up over the button that opened it, hiding the thing being changed.
+- **The settings window closes when a fight starts, and the anchor locks.** Not because
+  anything here would be blocked - none of these windows touch a secure frame, so
+  nothing throws "action blocked" the way an addon driving action bars does. The
+  reason is that both states put fake data on screen: with the window open, the pips demo themselves, and sample
+  data during a real pull cannot be told apart from the real thing. Nothing reopens
+  when combat drops.
+- **The slash command is now `/ncb`**, taken over from nugsCastBars, which has moved
+  to `/ncast`. `/nugscombobar` still works. `/ncombo` is gone - it was the odd one
+  out in a family where everything else is an n and two or three letters.
+
 ## 0.4.4
 
 - **The scroll bar can be grabbed and dragged.** It was drawn as a texture, and a

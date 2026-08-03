@@ -160,7 +160,7 @@ end
 -- One bad widget call used to abandon the rest of the styling pass silently: the
 -- pips still drew, but everything after the failing line - colours, glow, layout -
 -- never ran, which looks exactly like "the options do nothing". Now a failure is
--- caught, counted and reported by /ncombo diag instead of vanishing.
+-- caught, counted and reported by /ncb diag instead of vanishing.
 --------------------------------------------------------------------------------
 NCB.errors = {}
 
@@ -168,7 +168,7 @@ local function Guard(label, fn, ...)
     local ok, err = pcall(fn, ...)
     if not ok and not NCB.errors[label] then
         NCB.errors[label] = tostring(err)
-        NCB.Print("|cffff8080error in " .. label .. "|r - see |cffffd479/ncombo diag|r")
+        NCB.Print("|cffff8080error in " .. label .. "|r - see |cffffd479/ncb diag|r")
     end
     return ok
 end
@@ -273,7 +273,7 @@ local function StylePip(pip, res, cfg)
     --------------------------------------------------------------------- range
     -- The line that makes the whole design work.
     Guard("range", function()
-        local scale = res.scale or 1
+        local scale = NCB.Resources:Scale()
         pip.scale = scale
         pip.bar:SetMinMaxValues((pip.index - 1) * scale, pip.index * scale)
         if pip.cd then pip.cd:SetShown(false) end
@@ -281,7 +281,7 @@ local function StylePip(pip, res, cfg)
 end
 
 -- nil when nothing has been built yet, otherwise whether the mask pass succeeded.
--- Reported by /ncombo diag, because a mask that fails takes the shapes and the
+-- Reported by /ncb diag, because a mask that fails takes the shapes and the
 -- outline border with it and there is no other way to see that from in game.
 function Display:MasksWorking()
     if not (pips and pips[1]) then return nil end
@@ -303,7 +303,7 @@ end
 
 function Display:Probe()
     if not (pips and pips[1]) then
-        NCB.Print("nothing built yet - open the options window or /ncombo test first.")
+        NCB.Print("nothing built yet - open the options window or /ncb test first.")
         return
     end
     local n = math.max(1, NCB.Resources.maxPips or 1)
@@ -482,6 +482,22 @@ function Display:SetLocked(locked)
     if NCB.RefreshOptions then NCB.RefreshOptions() end
 end
 
+-- The deliberate act, as opposed to SetLocked which ApplySettings calls on every
+-- change to re-assert the current state. Everything chatty, and everything that
+-- rearranges windows, belongs here so that neither happens on a slider tick.
+function Display:ToggleLock(locked)
+    self:SetLocked(locked)
+    if locked then
+        NCB.Print("locked.")
+    else
+        NCB.Print("unlocked - drag it where you want it, then |cffffd479/ncb lock|r.")
+    end
+    -- The options window gets out of the way while you are placing things, and a
+    -- small bar takes its place. Options.lua owns that; guarded because that file is
+    -- only loaded on demand.
+    if NCB.OnLockChanged then NCB.OnLockChanged(NCB.db.locked) end
+end
+
 --------------------------------------------------------------------------------
 -- Rebuild: called when the resource, the pip count or the look changes
 --------------------------------------------------------------------------------
@@ -557,7 +573,7 @@ function Display:Update()
     end
 
     local value = Cycling() and testValue or NCB.Resources:Value()
-    local maxRaw = count * (res.scale or 1)
+    local maxRaw = count * NCB.Resources:Scale()
     local charged = (not Cycling()) and NCB.Resources:ChargedPoints() or nil
     local L = look()
 
@@ -622,7 +638,7 @@ function Display:Update()
         -- Pop only the pip that just filled. `plain` is in raw units, so it has to
         -- come back through the scale to name a pip - Destruction counts in tenths.
         if L.animate and plain and lastPlain and plain > lastPlain
-           and i == math.ceil(plain / (res.scale or 1)) then
+           and i == math.ceil(plain / NCB.Resources:Scale()) then
             Display:Pop(pip)
         end
       end)
@@ -809,7 +825,7 @@ end
 -- Demo cycle
 --
 -- Drives the pips through their whole range so the look can be judged without going
--- and hitting something. Two things turn it on: /ncombo test, and simply having the
+-- and hitting something. Two things turn it on: /ncb test, and simply having the
 -- options window open.
 --
 -- The options-window case is the important one. Every colour and glow control acts
@@ -840,7 +856,7 @@ local function StartCycle()
         if GetTime() < nextStep then return end
         local res   = NCB.Resources.active
         if not res then return end
-        local step  = res.scale or 1
+        local step  = NCB.Resources:Scale()
         local top   = NCB.Resources.maxPips * step
 
         testValue = testValue + testDirection * step
@@ -883,7 +899,7 @@ function Display:Test()
     Display.testing = not Display.testing
     if Display.testing then
         StartCycle()
-        NCB.Print("demo cycle on - |cffffd479/ncombo test|r again to stop.")
+        NCB.Print("demo cycle on - |cffffd479/ncb test|r again to stop.")
     else
         if not Display.previewing then StopCycle() end
         NCB.Print("demo cycle off.")

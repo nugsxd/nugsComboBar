@@ -474,7 +474,7 @@ local function RegisterWithSuite()
         title      = "nugsComboBar",
         version    = NCB.version,
         icon       = "Interface\\AddOns\\nugsComboBar\\icon",
-        slash      = "/ncombo",
+        slash      = "/ncb",
         Open       = function() NCB.ToggleOptions() end,
         SetMinimap = function(shown)
             NCB.db.minimapHidden = not shown
@@ -513,21 +513,21 @@ end)
 
 --------------------------------------------------------------------------------
 -- Slash command
--- /ncb belongs to nugsCastBars, so this one answers to /ncombo.
+-- /ncb belongs to nugsCastBars, so this one answers to /ncb.
 --------------------------------------------------------------------------------
 local function Usage()
     NCB.Print("v" .. NCB.version .. " commands:")
-    print("  |cffffd479/ncombo|r - open the options window")
-    print("  |cffffd479/ncombo unlock|r / |cffffd479/ncombo lock|r - drag the display into place")
-    print("  |cffffd479/ncombo test|r - cycle the pips so you can see the look")
-    print("  |cffffd479/ncombo on|r / |cffffd479/ncombo off|r - master switch")
-    print("  |cffffd479/ncombo reset|r - back to the shipped look and position")
-    print("  |cffffd479/ncombo minimap|r - show or hide the minimap button")
-    print("  |cffffd479/ncombo diag|r - report what the addon sees for your spec")
-    print("  |cffffd479/ncombo probe|r - report the live state of the pip widgets")
+    print("  |cffffd479/ncb|r - open the options window")
+    print("  |cffffd479/ncb unlock|r / |cffffd479/ncb lock|r - drag the display into place")
+    print("  |cffffd479/ncb test|r - cycle the pips so you can see the look")
+    print("  |cffffd479/ncb on|r / |cffffd479/ncb off|r - master switch")
+    print("  |cffffd479/ncb reset|r - back to the shipped look and position")
+    print("  |cffffd479/ncb minimap|r - show or hide the minimap button")
+    print("  |cffffd479/ncb diag|r - report what the addon sees for your spec")
+    print("  |cffffd479/ncb probe|r - report the live state of the pip widgets")
 end
 
-SLASH_NUGSCOMBOBAR1 = "/ncombo"
+SLASH_NUGSCOMBOBAR1 = "/ncb"
 SLASH_NUGSCOMBOBAR2 = "/nugscombobar"
 SlashCmdList["NUGSCOMBOBAR"] = function(msg)
     local db = NCB.db
@@ -547,12 +547,10 @@ SlashCmdList["NUGSCOMBOBAR"] = function(msg)
         NCB.Print("display " .. (db.enabled and "enabled" or "disabled") .. ".")
 
     elseif cmd == "unlock" then
-        NCB.Display:SetLocked(false)
-        NCB.Print("unlocked - drag it where you want it, then |cffffd479/ncombo lock|r.")
+        NCB.Display:ToggleLock(false)
 
     elseif cmd == "lock" then
-        NCB.Display:SetLocked(true)
-        NCB.Print("locked.")
+        NCB.Display:ToggleLock(true)
 
     elseif cmd == "test" then
         NCB.Display:Test()
