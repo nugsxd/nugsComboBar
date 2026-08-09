@@ -1,8 +1,8 @@
-## Interface: 120007
+## Interface: 120007, 120100
 ## Title: nugsComboBar
 ## Notes: Tracks your class resource - combo points, holy power, chi, soul shards,|narcane charges, runes and essence - as configurable pips.|nSupports LibSharedMedia textures and fonts.|nCreated by nugs.
 ## Author: nugs
-## Version: 0.4.7
+## Version: 0.4.9
 ## IconTexture: Interface\AddOns\nugsComboBar\icon
 
 # NOTE: if the addon list shows a blank icon, this BLP is not loading on your

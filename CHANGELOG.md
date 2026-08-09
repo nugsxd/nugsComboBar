@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.4.9
+
+- **The bar can no longer be placed during combat**, which matches the rule that a pull
+  locks it in the first place. Unlocking puts the drag box and a filled sample bar over
+  the top of your actual resource, which is the worst possible moment for it. It is now
+  refused with a line of chat rather than half-entered.
+- **Ready for patch 12.1.** The .toc declares `120007, 120100`, so this is current
+  on live and on the 12.1 PTR at once rather than being flagged out of date on one of
+  them. Nothing here uses an API that 12.1 removes, and the unit calls that begin
+  returning secret values in 12.1 are guarded - a release check now enforces both, so
+  it stays true.
+
+## 0.4.8
+
+- **Fixed: "action blocked" errors during combat.** `SetPropagateKeyboardInput` - used
+  so that Escape closes a dropdown or the placement bar rather than the window behind
+  it - is protected during a fight. Calling it then raises ADDON_ACTION_BLOCKED naming
+  this addon, and unlike a Lua error it cannot be caught: it taints the addon for the
+  rest of the session. 8 call sites now skip themselves in combat.
+- The worst of them was the key handler: it guarded the Escape branch but not the
+  branch every *other* key took, so with a list open in combat any keypress would have
+  thrown it - movement keys included.
+
 ## 0.4.7
 
 - Internal hardening, no visible change. The scroll helper's fallback width guard could

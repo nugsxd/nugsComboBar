@@ -486,6 +486,15 @@ end
 -- change to re-assert the current state. Everything chatty, and everything that
 -- rearranges windows, belongs here so that neither happens on a slider tick.
 function Display:ToggleLock(locked)
+    -- Unlocking mid-fight is refused, for the same reason a pull locks the bar:
+    -- placing it puts the drag box and a filled sample bar on screen, which cannot be
+    -- told apart from your actual resource during a real pull. The button and the
+    -- slash command both come through here, so this is the only place it needs saying.
+    if not locked and InCombatLockdown() then
+        NCB.Print("the bar cannot be placed during combat - try again after the fight.")
+        return
+    end
+
     self:SetLocked(locked)
     if locked then
         NCB.Print("locked.")

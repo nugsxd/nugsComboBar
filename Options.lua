@@ -46,6 +46,15 @@ local currentKey = "general"
 local sink                         -- where newly built widgets register themselves
 local RelayoutAll
 
+-- SetPropagateKeyboardInput is protected during combat, and a blocked call is not a
+-- Lua error: pcall does not contain it, it raises ADDON_ACTION_BLOCKED and taints the
+-- addon for the rest of the session. So it is never called inside a lockdown, and the
+-- next key pressed after combat ends restores propagation on its own.
+local function SafePropagate(frame, value)
+    if InCombatLockdown() then return end
+    frame:SetPropagateKeyboardInput(value)
+end
+
 local function look()      return NCB.db.look      end
 local function behaviour() return NCB.db.behaviour end
 local function extras()    return NCB.db.extras    end
@@ -467,13 +476,13 @@ local function AttachPopupBehaviour(popup, closeOnOutside)
     -- only for the Escape that is actually being handled, which is what stops the same
     -- press also reaching CloseSpecialWindows and shutting the window.
     popup:EnableKeyboard(true)
-    popup:SetPropagateKeyboardInput(true)
+    SafePropagate(popup, true)
     popup:SetScript("OnKeyDown", function(self, key)
         if key == "ESCAPE" and not InCombatLockdown() then
-            self:SetPropagateKeyboardInput(false)
+            SafePropagate(self, false)
             self:Hide()
         else
-            self:SetPropagateKeyboardInput(true)
+            SafePropagate(self, true)
         end
     end)
 
@@ -498,7 +507,7 @@ local function AttachPopupBehaviour(popup, closeOnOutside)
     end)
     popup:HookScript("OnHide", function(self)
         self:SetScript("OnUpdate", nil)
-        self:SetPropagateKeyboardInput(true)
+        SafePropagate(self, true)
         if catcher then catcher:Hide() end
     end)
     return popup
@@ -1722,13 +1731,13 @@ local function BuildMoveBar()
     -- Escape locks rather than just dismissing the bar. Hiding it while things were
     -- still unlocked would leave the state with nothing on screen to end it.
     f:EnableKeyboard(true)
-    f:SetPropagateKeyboardInput(true)
+    SafePropagate(f, true)
     f:SetScript("OnKeyDown", function(self, key)
         if key == "ESCAPE" and not InCombatLockdown() then
-            self:SetPropagateKeyboardInput(false)
+            SafePropagate(self, false)
             NCB.Display:ToggleLock(true)
         else
-            self:SetPropagateKeyboardInput(true)
+            SafePropagate(self, true)
         end
     end)
 
@@ -1747,7 +1756,7 @@ function NCB.OnLockChanged(locked)
             window:Hide()
         end
         moveBar = moveBar or BuildMoveBar()
-        moveBar:SetPropagateKeyboardInput(true)
+        SafePropagate(moveBar, true)
         moveBar:Show()
     else
         if moveBar then moveBar:Hide() end
