@@ -473,6 +473,12 @@ function Display:Init()
 end
 
 function Display:SetLocked(locked)
+    -- The guard lives HERE, not only in the toggle above it, because this is where
+    -- the state actually changes. Every button and slash command is polite about
+    -- asking first, but "every caller is polite" is an assumption rather than a
+    -- guarantee, and it takes one direct call to leave drag handles on screen
+    -- mid-pull.
+    if not locked and InCombatLockdown() then return end
     NCB.db.locked = locked and true or false
     if not anchor then return end
     anchor:EnableMouse(not NCB.db.locked)
