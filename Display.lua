@@ -117,6 +117,20 @@ local function NewPip(index)
     pip.maskFull = NewMask(pip.full)
     pip.fullTex:AddMaskTexture(pip.maskFull)
 
+    -- A threshold line, on its own frame ABOVE the fills.
+    --
+    -- Not a texture on `pip`: pip.bar and pip.full are child FRAMES at higher frame
+    -- levels, and a child frame's textures draw over the parent's whatever draw layer
+    -- the parent's are on. A mark on the pip itself is therefore painted over by the
+    -- fill the moment the bar reaches it - and invisible from the start on a bar whose
+    -- empty backing is opaque, which is why the first version of this showed nothing.
+    pip.markLayer = CreateFrame("Frame", nil, pip)
+    pip.markLayer:SetAllPoints(pip)
+    pip.markLayer:SetFrameLevel(pip:GetFrameLevel() + 6)
+    pip.mark = pip.markLayer:CreateTexture(nil, "OVERLAY")
+    pip.mark:SetTexture("Interface\\Buttons\\WHITE8X8")
+    pip.mark:Hide()
+
     pip.glow = pip:CreateTexture(nil, "OVERLAY")
     pip.glow:SetTexture("Interface\\Buttons\\WHITE8X8")
     pip.glow:SetBlendMode("ADD")
@@ -180,9 +194,22 @@ NCB.Guard = Guard
 -- depends on client behaviour I cannot verify from outside the game, so a failure
 -- there must not be allowed to take the colours and the glow down with it - which is
 -- exactly what a single flat function did.
+-- A pip's size, which in bar mode is the whole row's worth.
+local function PipSize()
+    local L = look()
+    local span = math.max(1, NCB.Resources.barSpan or 1)
+    if span == 1 then return L.pipWidth, L.pipHeight end
+
+    local horizontal = (L.direction == "right" or L.direction == "left")
+    local total = span * (horizontal and L.pipWidth or L.pipHeight)
+                  + (span - 1) * L.spacing
+    if horizontal then return total, L.pipHeight end
+    return L.pipWidth, total
+end
+
 local function StylePip(pip, res, cfg)
     local L = look()
-    local w, h = L.pipWidth, L.pipHeight
+    local w, h = PipSize()
     local inset = L.showBorder and L.borderSize or 0
     local shape = L.shape or "rounded"
 
@@ -260,6 +287,40 @@ local function StylePip(pip, res, cfg)
     end)
 
     ---------------------------------------------------------------------- glow
+    -- The threshold marker. Only meaningful on a bar: on a row of pips the boundary
+    -- between one pip and the next already IS the mark, and a line drawn inside one
+    -- of them would be a second, competing division.
+    Guard("mark", function()
+        -- Resolved once per shape change rather than recomputed here: it may come
+        -- from a spell's real cost, which is a client lookup and not free.
+        local frac = NCB.Resources.markFrac
+        if not frac or frac <= 0 or frac >= 1 or (NCB.Resources.barSpan or 1) <= 1 then
+            pip.mark:Hide()
+            return
+        end
+
+        local horizontal = (L.direction == "right" or L.direction == "left")
+        -- Measured from the end the bar fills FROM, so the mark lands on the same
+        -- amount of resource whichever way the bar is pointed.
+        local thickness = 2
+        pip.mark:ClearAllPoints()
+        -- White at low alpha over the fill reads on both a dark empty bar and a lit
+        -- one; solid black vanished into the empty backing.
+        pip.mark:SetVertexColor(1, 1, 1, 0.9)
+        if horizontal then
+            local x = (L.direction == "left") and -(frac * w) or (frac * w)
+            local from = (L.direction == "left") and "TOPRIGHT" or "TOPLEFT"
+            pip.mark:SetPoint("TOP", pip.markLayer, from, x, -inset)
+            pip.mark:SetSize(thickness, h - inset * 2)
+        else
+            local y = (L.direction == "up") and (frac * h) or -(frac * h)
+            local from = (L.direction == "up") and "BOTTOMLEFT" or "TOPLEFT"
+            pip.mark:SetPoint("LEFT", pip.markLayer, from, inset, y)
+            pip.mark:SetSize(w - inset * 2, thickness)
+        end
+        pip.mark:Show()
+    end)
+
     Guard("glow", function()
         pip.fullGlow:ClearAllPoints()
         pip.fullGlow:SetPoint("CENTER", pip, "CENTER", 0, 0)
@@ -380,10 +441,14 @@ local function RowSize(count)
     local L = look()
     local horizontal = (L.direction == "right" or L.direction == "left")
     if count <= 0 then return 1, 1 end
+
+    -- Asked of PipSize rather than recomputed from pipWidth, so the anchor and the
+    -- pip inside it cannot disagree about how wide a bar is.
+    local pw, ph = PipSize()
     if horizontal then
-        return count * L.pipWidth + (count - 1) * L.spacing, L.pipHeight
+        return count * pw + (count - 1) * L.spacing, ph
     end
-    return L.pipWidth, count * L.pipHeight + (count - 1) * L.spacing
+    return pw, count * ph + (count - 1) * L.spacing
 end
 
 local function LayoutPips(count)
@@ -430,13 +495,18 @@ function Display:Init()
     anchor = CreateFrame("Frame", "nugsComboBarAnchor", UIParent)
     anchor:SetFrameStrata("MEDIUM")
     anchor:SetClampedToScreen(true)
-    anchor:SetMovable(true)
-    anchor:RegisterForDrag("LeftButton")
-    anchor:SetScript("OnDragStart", function(self) self:StartMoving() end)
-    anchor:SetScript("OnDragStop", function(self)
-        self:StopMovingOrSizing()
-        SavePosition()
-    end)
+    -- Dragging, from the shared nugsMove.lua. Read the note at the top of that file:
+    -- it asserts that a frame nobody is holding is not moving, rather than closing one
+    -- more route by which a move could be left running.
+    NCB.InstallMove(anchor, {
+        label = "the resource bar",
+        -- The mouse belongs to the lock state, not to this call: the anchor takes
+        -- clicks only while unlocked, so every click lands in the world otherwise.
+        mouse = false,
+        -- Runs however the move ended, including when the invariant ended it because
+        -- the mouse-up never arrived.
+        onEnd = function() SavePosition() end,
+    })
 
     -- Only drawn while unlocked, so there is something to grab when the resource
     -- itself is empty or the class has none at all.
@@ -502,6 +572,9 @@ function Display:ToggleLock(locked)
     end
 
     self:SetLocked(locked)
+    -- The resource bars are draggable too, and a lock that left them loose would be
+    -- a lock that does not mean what it says.
+    if NCB.Power then NCB.Power:SetLocked(locked) end
     if locked then
         NCB.Print("locked.")
     else
@@ -546,13 +619,19 @@ function Display:Rebuild()
     local font, size = NCB.FontPath(L.font), L.fontSize
     pcall(countText.SetFont, countText, font, size, L.fontOutline ~= "NONE" and L.fontOutline or "")
     countText:SetTextColor(unpack(L.colorText))
+    -- Anchored for every mode that is not "none", with the middle as the fallback.
+    --
+    -- The chain used to name three modes and silently do nothing for a fourth, which
+    -- left the font string with no anchor at all: still "shown", drawing nowhere.
+    -- A value that reaches here and matches nothing is a bug somewhere else, and the
+    -- readable failure is a number in the wrong place, not an invisible one.
     countText:ClearAllPoints()
-    if L.countMode == "center" then
-        countText:SetPoint("CENTER", anchor, "CENTER", 0, 0)
-    elseif L.countMode == "above" then
+    if L.countMode == "above" then
         countText:SetPoint("BOTTOM", anchor, "TOP", 0, 3)
     elseif L.countMode == "below" then
         countText:SetPoint("TOP", anchor, "BOTTOM", 0, -3)
+    else
+        countText:SetPoint("CENTER", anchor, "CENTER", 0, 0)
     end
     countText:SetShown(L.countMode ~= "none" and count > 0)
 

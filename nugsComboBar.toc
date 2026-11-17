@@ -1,9 +1,9 @@
-## Interface: 120100
+## Interface: 120105, 16001
 ## Title: nugsComboBar
 ## Category: nugsAddons
 ## Notes: Tracks your class resource - combo points, holy power, chi, soul shards,|narcane charges, runes and essence - as configurable pips.|nSupports LibSharedMedia textures and fonts.|nCreated by nugs.
 ## Author: nugs
-## Version: 0.4.12
+## Version: 0.14.0
 ## IconTexture: Interface\AddOns\nugsComboBar\icon
 
 # NOTE: if the addon list shows a blank icon, this BLP is not loading on your
@@ -21,8 +21,11 @@
 # game flags this addon as "out of date". Find it with:  /run print((select(4,GetBuildInfo())))
 
 
+nugsProfile.lua
+nugsMove.lua
 Core.lua
 Resources.lua
 Display.lua
+Power.lua
 Options.lua
 Minimap.lua

@@ -110,6 +110,38 @@ local function SectionHeader(parent, text)
     return fs
 end
 
+-- One white triangle, pointed whichever way is asked for.
+--
+-- Our own art rather than Blizzard's: UI-SortArrow is a whole arrow with a tail, which
+-- is not what a marker on a small button should look like, and stock texture paths are
+-- the thing that gets renamed between expansions.
+--
+-- Rotated by texture coordinates rather than shipping four files. The eight-argument
+-- form of SetTexCoord rotates the quad; the four-argument form can only flip it, which
+-- is why left and right cannot be done by mirroring an up arrow.
+--
+-- The two horizontal entries look backwards and are not: rotating the COORDINATES
+-- clockwise rotates the drawn IMAGE counter-clockwise. Trace the apex rather than
+-- reasoning about the rotation - the reasoning is what got them swapped the first time.
+local ARROW_TEX = "Interface\\AddOns\\nugsComboBar\\arrow"
+local ARROW_COORDS = {
+    up    = { 0, 0, 0, 1, 1, 0, 1, 1 },
+    down  = { 1, 1, 1, 0, 0, 1, 0, 0 },
+    left  = { 1, 0, 0, 0, 1, 1, 0, 1 },
+    right = { 0, 1, 1, 1, 0, 0, 1, 0 },
+}
+
+local function Arrow(owner, facing, point, x)
+    local a = owner:CreateTexture(nil, "OVERLAY")
+    a:SetTexture(ARROW_TEX)
+    a:SetTexCoord(unpack(ARROW_COORDS[facing]))
+    a:SetVertexColor(1, 1, 1)
+    a:SetSize(8, 8)
+    a:SetPoint(point, x, 0)
+    a:SetAlpha(0.8)
+    return a
+end
+
 local function Button(parent, text, w, h, onClick)
     local b = CreateFrame("Button", nil, parent)
     b:SetSize(w, h)
@@ -122,6 +154,40 @@ local function Button(parent, text, w, h, onClick)
     b:SetScript("OnLeave", function(self) self.bgTex:SetColorTexture(unpack(C.btn)) end)
     b:SetScript("OnClick", onClick)
     b.SetLabel = function(self, t) self.text:SetText(t) end
+
+    -- Marks this button as one that CYCLES: an arrow each side, because the next value
+    -- is one click away and there is no list to open.
+    --
+    -- The pair is the point. A dropdown and a cycler are the same rectangle with the
+    -- same text in it, and the only way to know which you were looking at was to click
+    -- it. One chevron down means "a list appears"; arrows both sides mean "this steps".
+    --
+    -- Only ever put on a control that really behaves that way - one wearing the wrong
+    -- marker is worse than one wearing none, because the marker becomes the thing
+    -- misleading you.
+    b.MarkAsCycle = function(self)
+        if self.leftArrow then return self end
+        self.leftArrow  = Arrow(self, "left",  "LEFT",   5)
+        self.rightArrow = Arrow(self, "right", "RIGHT", -5)
+        if self.text then
+            self.text:ClearAllPoints()
+            self.text:SetPoint("LEFT", 16, 0)
+            self.text:SetPoint("RIGHT", -16, 0)
+        end
+        return self
+    end
+
+    b.MarkAsDropdown = function(self)
+        if self.arrow then return self end
+        self.arrow = Arrow(self, "down", "RIGHT", -6)
+        if self.text then
+            self.text:ClearAllPoints()
+            self.text:SetPoint("LEFT", 6, 0)
+            self.text:SetPoint("RIGHT", -18, 0)
+            self.text:SetJustifyH("LEFT")
+        end
+        return self
+    end
     return b
 end
 
@@ -137,8 +203,12 @@ local function HeaderBar(f, titleText, tailText)
     header:SetHeight(30)
     header:EnableMouse(true)
     header:RegisterForDrag("LeftButton")
-    header:SetScript("OnDragStart", function() f:StartMoving() end)
-    header:SetScript("OnDragStop", function() f:StopMovingOrSizing() end)
+
+    -- Dragging, and the guarantee that a move ends: from the shared nugsMove.lua,
+    -- which asserts that a frame nobody is holding is not moving rather than closing
+    -- one more route by which a move could be left running. Read the note at the top
+    -- of that file before changing anything here.
+    NCB.InstallMove(f, { label = "the settings window", handle = header, body = true })
 
     local accent = header:CreateTexture(nil, "OVERLAY")
     accent:SetPoint("BOTTOMLEFT", 0, 0)
@@ -354,6 +424,7 @@ local function Choice(parent, prefix, options, getter, setter)
         Apply()
         NCB.RefreshOptions()
     end)
+    btn:MarkAsCycle()
     btn:SetPoint("LEFT", 0, 0)
     btn:SetPoint("RIGHT", 0, 0)
 
@@ -942,6 +1013,7 @@ local function MediaButton(parent, kind, prefix, getter, setter)
             NCB.RefreshOptions()
         end)
     end)
+    btn:MarkAsDropdown()
     btn:SetPoint("LEFT", 0, 0)
     btn:SetPoint("RIGHT", 0, 0)
 
@@ -1017,6 +1089,7 @@ local TABS = {
     { key = "general",    label = "General"    },
     { key = "appearance", label = "Appearance" },
     { key = "colours",    label = "Colours"    },
+    { key = "bars",       label = "Resource bars" },
     { key = "extras",     label = "Extras"     },
 }
 
@@ -1034,6 +1107,123 @@ local function SelectTab(key)
         p.panel:SetShown(k == key)
     end
     NCB.RefreshOptions()
+end
+
+
+-- A real dropdown: the current value on the face, the whole list on one click.
+--
+-- Choice() cycles instead, which is the right control for two or three options where
+-- the next one is always one click away. It is wrong past four or five: finding the
+-- ninth means clicking eight times and watching the label, and you cannot see what is
+-- on offer without visiting all of it. Both are kept - the cycling form is still
+-- better for a short list, and it now says which it is with an arrow at each side.
+local listPopup
+
+local function ToggleListPicker(anchorTo, entries, onPick)
+    if listPopup and listPopup:IsShown() then listPopup:Hide() return end
+
+    if not listPopup then
+        listPopup = CreateFrame("Frame", nil, UIParent)
+        listPopup:SetFrameStrata("FULLSCREEN_DIALOG")
+        listPopup:EnableMouse(true)
+        listPopup:SetClampedToScreen(true)
+        Backdrop(listPopup, C.bg, 1)
+        listPopup.scroll = ScrollArea(listPopup)
+        listPopup.scroll:SetPoint("TOPLEFT", 5, -5)
+        listPopup.scroll:SetPoint("BOTTOMRIGHT", -5, 5)
+        listPopup.rows = {}
+        AttachPopupBehaviour(listPopup, true)
+    end
+
+    -- Sized to its contents, capped so a long list scrolls instead of running off the
+    -- screen. The scroll bar hides itself when everything fits, so a short list gets
+    -- no furniture it has no use for.
+    local rowH = 22
+    listPopup:SetSize(170, math.min(#entries * rowH + 10, 240))
+
+    local content = listPopup.scroll.content
+    -- From the popup's own size, NOT from scroll:GetWidth(): the scroll is positioned
+    -- by anchors and measures 0 on the very first call, which builds every row
+    -- zero-wide and makes the list look empty until the second click.
+    content:SetWidth(listPopup:GetWidth() - 10)
+
+    for index, entry in ipairs(entries) do
+        local row = listPopup.rows[index]
+        if not row then
+            row = CreateFrame("Button", nil, content)
+            row:SetHeight(rowH)
+            row.stripe = row:CreateTexture(nil, "BACKGROUND")
+            row.stripe:SetAllPoints()
+            row.stripe:SetColorTexture(1, 1, 1, 0)
+            row.label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            row.label:SetPoint("LEFT", 6, 0)
+            row.label:SetPoint("RIGHT", -6, 0)
+            row.label:SetJustifyH("LEFT")
+            row:SetScript("OnEnter", function(self) self.stripe:SetColorTexture(1, 1, 1, 0.10) end)
+            row:SetScript("OnLeave", function(self) self.stripe:SetColorTexture(1, 1, 1, 0) end)
+            listPopup.rows[index] = row
+        end
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", 0, -(index - 1) * rowH)
+        row:SetPoint("TOPRIGHT", 0, -(index - 1) * rowH)
+        row.label:SetText(entry.label)
+        row:SetScript("OnClick", function()
+            onPick(entry.key)
+            listPopup:Hide()
+        end)
+        row:Show()
+    end
+    for index = #entries + 1, #listPopup.rows do listPopup.rows[index]:Hide() end
+
+    content:SetHeight(math.max(1, #entries * rowH))
+    listPopup.scroll:SetVerticalScroll(0)
+    listPopup.scroll:UpdateBar()
+
+    listPopup:ClearAllPoints()
+    local below = (anchorTo:GetBottom() or 0) - listPopup:GetHeight()
+    if below < 20 then
+        listPopup:SetPoint("BOTTOMLEFT", anchorTo, "TOPLEFT", 0, 2)
+    else
+        listPopup:SetPoint("TOPLEFT", anchorTo, "BOTTOMLEFT", 0, -2)
+    end
+    listPopup:Show()
+end
+
+local function Dropdown(parent, prefix, options, getter, setter)
+    local holder = CreateFrame("Frame", nil, parent)
+    holder:SetHeight(ROW_H)
+
+    -- Same shape as Choice: an option may be a table with key and label, or a bare
+    -- string that is both. Anchors and outlines are stored as plain string lists.
+    local function keyOf(o)   return type(o) == "table" and o.key or o end
+    local function labelOf(o) return type(o) == "table" and o.label or o end
+    local function list()     return type(options) == "function" and options() or options end
+
+    local btn
+    btn = Button(holder, "", 100, ROW_H, function()
+        local entries = {}
+        for _, o in ipairs(list()) do
+            entries[#entries + 1] = { key = keyOf(o), label = labelOf(o) }
+        end
+        ToggleListPicker(btn, entries, function(key)
+            setter(key)
+            Apply()
+            NCB.RefreshOptions()
+        end)
+    end)
+    btn:MarkAsDropdown()
+    btn:SetPoint("LEFT", 0, 0)
+    btn:SetPoint("RIGHT", 0, 0)
+
+    holder.Refresh = function()
+        local text = tostring(getter())
+        for _, o in ipairs(list()) do
+            if keyOf(o) == getter() then text = labelOf(o) end
+        end
+        btn:SetLabel(prefix .. ": " .. text)
+    end
+    sink[#sink + 1] = holder
+    return holder
 end
 
 local function BuildTabs(parent)
@@ -1135,7 +1325,7 @@ local function BuildGeneral(p)
     local pSave = Button(profileRow, "Save", 66, 22, function()
         local name = NCB.TrimName(profileBox:GetText())
         if name == "" then NCB.Print("give the profile a name first.") return end
-        local existed = NCB.db.profiles[name] ~= nil
+        local existed = NCB.Profile.account.profiles[name] ~= nil
         if NCB.SaveProfile(name) then
             NCB.Print((existed and "profile updated: " or "profile saved: ") .. name)
             NCB.RefreshOptions()
@@ -1281,7 +1471,9 @@ local function BuildAppearance(p)
     L:Hint("The pip is your chosen texture seen through this shape.")
 
     L:Header("Size and spacing")
-    L:Add(Slider(content, "Pip width", 4, 120, 1,
+    -- Up to 250 because a pip and a bar are the same control here, and a bar wants
+    -- the width of a resource bar rather than the width of one combo point.
+    L:Add(Slider(content, "Pip width", 4, 250, 1,
         function() return look().pipWidth end,
         function(v) look().pipWidth = v end, "%d px"), 42)
     L:Add(Slider(content, "Pip height", 4, 120, 1,
@@ -1415,6 +1607,43 @@ local function BuildColours(p)
                 NCB.ResourceConfig(key).enabled = v
                 NCB.Resources:Refresh()
             end), ROW_H, nil, 16)
+        col:Add(Check(content, "Draw as one bar",
+            function() return NCB.ResourceConfig(key).barMode end,
+            function(v)
+                NCB.ResourceConfig(key).barMode = v
+
+                -- A bar with no number on it is the one thing this option is not for.
+                -- Turned on for you the first time, and said out loud rather than done
+                -- quietly, because the number is a shared setting and changing it
+                -- affects every resource.
+                if v and look().countMode == "none" then
+                    look().countMode = "center"
+                    NCB.Print("turned the number on so the bar has something to read; "
+                              .. "it is under Look if you want it elsewhere.")
+                end
+
+                NCB.Resources:Refresh()
+                NCB.Display:Rebuild()
+                NCB.RefreshOptions()
+            end,
+            "Pips answer \"how many have I got\", which is right for five combo " ..
+            "points. A bar answers \"how full am I\", which is right for something " ..
+            "like Insanity that moves continuously and has no meaningful single " ..
+            "point."), ROW_H, nil, 16)
+        -- A percentage of the bar rather than a number of resource units, so it
+        -- cannot be wrong about what the units ARE. Insanity is shown as 0-100 and
+        -- has been stored at ten times that; half the bar is half the bar either way.
+        col:Add(Slider(content, "Mark at", 0, 100, 1,
+            function() return NCB.ResourceConfig(key).markAt or 0 end,
+            function(v)
+                NCB.ResourceConfig(key).markAt = v
+                -- Refresh, not just Rebuild: where the line goes is worked out when
+                -- the resource is resolved, because it can come from a spell's cost.
+                NCB.Resources:Refresh()
+                NCB.Display:Rebuild()
+            end, "%d%%"),
+            42, function() return NCB.ResourceConfig(key).barMode end, 16)
+
         if res.blizz then
             col:Add(Check(content, "Hide Blizzard's version",
                 function() return NCB.ResourceConfig(key).hideBlizzard end,
@@ -1537,11 +1766,121 @@ end
 --------------------------------------------------------------------------------
 local unlockBtn
 
+
+-- One column of controls for one resource bar. Both bars get exactly the same set,
+-- because they are the same thing pointed at different powers - the only difference
+-- is that the second one has to be told which power, and the first asks the client.
+local function BarControls(col, content, id, title, hint)
+    local function c() return NCB.db[id] end
+    local function on() return c().enabled end
+    local function changed()
+        NCB.Power:Rebuild()
+        NCB.RefreshOptions()
+    end
+
+    col:Header(title)
+    col:Hint(hint)
+
+    col:Add(Check(content, "Show this bar",
+        function() return c().enabled end,
+        function(v) c().enabled = v; changed() end), ROW_H)
+
+    if id == "power2" then
+        col:Add(Dropdown(content, "Power", NCB.POWER_CHOICES,
+            function() return c().powerType end,
+            function(v) c().powerType = v; changed() end), 26, on)
+    end
+
+    col:Add(Slider(content, "Width", 40, 400, 1,
+        function() return c().width end,
+        function(v) c().width = v; changed() end, "%d px"), 42, on)
+    col:Add(Slider(content, "Height", 4, 60, 1,
+        function() return c().height end,
+        function(v) c().height = v; changed() end, "%d px"), 42, on)
+    -- "texture" is the kind the picker knows; "statusbar" would open an empty list.
+    col:Add(MediaButton(content, "texture", "Texture",
+        function() return c().texture end,
+        function(v) c().texture = v; changed() end), 26, on)
+    col:Add(Choice(content, "Number", NCB.POWER_TEXT_MODES,
+        function() return c().textMode end,
+        function(v) c().textMode = v; changed() end), 26, on)
+
+    -- The number's font. Shared with the pip row unless this bar asks for its own.
+    local function numberOn() return on() and c().textMode ~= "none" end
+    local function ownOn() return numberOn() and c().ownFont end
+    col:Add(Check(content, "Own font for the number",
+        function() return c().ownFont end,
+        function(v)
+            -- Start from what the bar is showing right now, so ticking the box
+            -- changes nothing on screen until a font setting is actually changed.
+            if v and not c().ownFont then
+                local L = NCB.db.look
+                c().font, c().fontSize, c().fontOutline = L.font, L.fontSize, L.fontOutline
+            end
+            c().ownFont = v
+            changed()
+        end,
+        "Off, the number uses the font from the Appearance tab, so the bar matches " ..
+        "the pips. On, this bar gets its own font, outline and size."), ROW_H, numberOn)
+    col:Add(MediaButton(content, "font", "Font",
+        function() return c().font end,
+        function(v) c().font = v; changed() end), 26, ownOn)
+    col:Add(Choice(content, "Outline", NCB.OUTLINES,
+        function() return c().fontOutline end,
+        function(v) c().fontOutline = v; changed() end), 26, ownOn)
+    col:Add(Slider(content, "Font size", 6, 32, 1,
+        function() return c().fontSize end,
+        function(v) c().fontSize = v; changed() end, "%d"), 42, ownOn)
+
+    col:Add(Check(content, "Use the game's colour for this power",
+        function() return c().useClassColor end,
+        function(v) c().useClassColor = v; changed() end,
+        "Energy yellow, Fury purple, Rage red, and so on - the same colours the " ..
+        "default UI uses."), ROW_H, on)
+    col:Add(Swatch(content, "Custom colour",
+        function() return c().color end, false),
+        ROW_H, function() return on() and not c().useClassColor end)
+    col:Add(Check(content, "Border",
+        function() return c().showBorder end,
+        function(v) c().showBorder = v; changed() end), ROW_H, on)
+    col:Add(Check(content, "Hide it while it is full",
+        function() return c().hideWhenFull end,
+        function(v) c().hideWhenFull = v; changed() end,
+        "For a resource that sits at maximum out of combat and only matters once " ..
+        "you start spending it."), ROW_H, on)
+    col:Gap(8)
+end
+
+local function BuildBars(p)
+    sink = p.widgets
+    local content = p.content
+    local L = NewColumn(content, 0, COL_W)
+    local R = NewColumn(content, COL_W + COL_GAP, COL_W)
+    p.cols = { L, R }
+
+    BarControls(L, content, "power", "Primary resource",
+        "Whatever this character actually spends - Energy, Fury, Rage, Focus,\n" ..
+        "Runic Power, Insanity. It follows your spec and your form on its own,\n" ..
+        "so a druid gets Energy in cat and Rage in bear with nothing to set.")
+
+    BarControls(R, content, "power2", "Second resource",
+        "For a class that has two at once: Shadow spends Insanity and still has\n" ..
+        "Mana, a resto druid in cat form has Energy and Mana. It stays hidden if\n" ..
+        "you do not have the power you pick, or if it is already the primary.")
+
+    R:Header("Both bars")
+    R:Hint("Drag them where you want while the display is unlocked. They use the\n" ..
+           "font and number colour from the Appearance tab, so the whole display\n" ..
+           "matches without setting the same thing twice. Tick Own font for the\n" ..
+           "number on a bar to give it its own font, outline and size.")
+end
+
 local BUILDERS = {
     general    = BuildGeneral,
     appearance = BuildAppearance,
     colours    = BuildColours,
     extras     = BuildExtras,
+    bars       = BuildBars,
 }
 
 local function BuildWindow()
@@ -1552,9 +1891,6 @@ local function BuildWindow()
     f:SetMovable(true)
     f:EnableMouse(true)
     f:SetClampedToScreen(true)
-    f:RegisterForDrag("LeftButton")
-    f:SetScript("OnDragStart", f.StartMoving)
-    f:SetScript("OnDragStop", f.StopMovingOrSizing)
 
     -- See the note above about the CENTER anchor: convert it to explicit, pixel
     -- aligned coordinates the first time the window is shown, so the first drag has
@@ -1621,13 +1957,21 @@ local function BuildWindow()
     hint:SetPoint("BOTTOMRIGHT", -12, 18)
     hint:SetJustifyH("RIGHT")
 
-    f:SetScript("OnShow", function()
+    -- HookScript, NOT SetScript: this window already has an OnShow handler set
+    -- further up (the guard that stops a drag left running when the window is
+    -- hidden mid-move). SetScript would throw it away silently. Checked by
+    -- dragcheck.js HOOKKILL.
+    f:HookScript("OnShow", function()
         -- Run the pips through their range while the window is open, so the colour
         -- and glow controls are acting on something you can actually see.
         NCB.Display:SetPreview(true)
         NCB.RefreshOptions()
     end)
-    f:SetScript("OnHide", function()
+    -- HookScript, NOT SetScript: this window already has an OnHide handler set
+    -- further up (the guard that stops a drag left running when the window is
+    -- hidden mid-move). SetScript would throw it away silently. Checked by
+    -- dragcheck.js HOOKKILL.
+    f:HookScript("OnHide", function()
         NCB.Display:SetPreview(false)
         if mediaPopup then mediaPopup:Hide() end
     end)
@@ -1694,9 +2038,11 @@ local function BuildMoveBar()
     f:SetClampedToScreen(true)
     f:SetMovable(true)
     f:EnableMouse(true)
-    f:RegisterForDrag("LeftButton")
-    f:SetScript("OnDragStart", f.StartMoving)
-    f:SetScript("OnDragStop", f.StopMovingOrSizing)
+    -- Dragging, from the shared nugsMove.lua. This bar is the likeliest frame in
+    -- the addon to be hidden mid-move: the settings window hides it the instant it
+    -- opens, and a frame hidden between StartMoving and StopMovingOrSizing is never
+    -- given OnDragStop.
+    NCB.InstallMove(f, { label = "the move bar" })
     Backdrop(f, C.bg, 1)
 
     -- Storm-blue edge, so a floating bar reads as sitting on top of the world rather

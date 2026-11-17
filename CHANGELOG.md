@@ -1,5 +1,228 @@
 # Changelog
 
+## 0.14.0
+
+- **The resource bars can have their own font.** Each bar on the Bars tab has a new
+  **Own font for the number** box. Leave it off and the number uses the font from the
+  Appearance tab, as before. Tick it and that bar gets its own font, outline and size.
+  Ticking it starts from the font the bar is already using, so nothing moves until
+  you change something.
+
+
+## 0.13.0
+
+- **Runs on WoW Forever.** The addon now declares both 12.1.5 and 1.60.1, so one build
+  works on retail and on Forever.
+
+  Forever turned out to be the modern engine wearing a 1.x version number — 271 `C_`
+  namespaces, secret values, duration objects, all of it. What it does *not* have is
+  the deprecated globals retail still ships as shims, and this addon was already
+  written against the namespaced forms.
+
+
+## 0.12.1
+
+- **Updated for patch 12.1.5.** No behaviour changes — this marks the addon as current
+  so the client stops reporting it out of date.
+
+
+## 0.12.0
+
+- **Every movable window in this addon now uses one shared drag installer.**
+
+  "The window sticks to the cursor" / "the window jumps when I grab the title bar"
+  has been fixed four times across this family and come back every time. Each fix
+  named a *path* by which a move could be left running - hidden mid-drag, a guard
+  thrown away by a later `SetScript`, a click swallowed by a dropdown - closed that
+  one path, and lived in its own handler, leaving every other frame untouched.
+
+  The shared installer names no path. It asserts the thing that is true whatever the
+  path was: **a frame nobody is holding must not be moving**, re-checked every frame.
+  Anything that survives - known or unknown - is over on the next one. Starting a move
+  also stops any previous one first, because `StartMoving` on an already-moving frame
+  re-bases the move onto the cursor, which is exactly what the jump looked like.
+
+- **And it measures.** If a frame ever moves by an amount the cursor did not ask for,
+  it now says so in chat with the numbers - how far, what it was anchored to, whether
+  a move was already running, and what was under the cursor. Silent otherwise.
+
+
+## 0.11.2
+
+- **The fix for "the window sticks to the cursor" had never once run.** It was
+  written as `HookScript("OnHide", ...)` where the title bar is built, and
+  `BuildWindow` calls `SetScript("OnHide", ...)` much further down the same file.
+  `SetScript` replaces the whole handler including anything hooked onto it
+  beforehand, so the guard was discarded at load and the bug it was added for kept
+  happening. The handler that discarded it now runs it first.
+
+- A checker rule was added for this - `HOOKKILL` in `dragcheck.js` - because it is
+  the second time the same mechanism has silently killed a fix. It found this one.
+
+- The same applied to an `OnShow` hook that positioned the window on its first open.
+
+
+## 0.11.1
+
+- **Fixed a drag that could stick to the cursor.** A frame hidden between
+  `StartMoving` and `StopMovingOrSizing` never receives `OnDragStop` - the game does
+  not deliver drag scripts to a hidden frame - so the move stayed live and the frame
+  followed the cursor with no button held. Windows here hide themselves on a pull and
+  when anchors are locked, so being hidden mid-drag was never a corner case.
+
+  Every movable frame now stops moving when hidden. The minimap button drags from an
+  OnUpdate rather than StartMoving and had the same bug by a different route; it drops
+  the handler on hide instead.
+
+  Found in nugsAuras from a real report, then found in every addon in the family by a
+  new `HIDDENMOVE` rule in the drag checker.
+
+## 0.11.0
+
+- **Long option lists are dropdowns rather than cycling buttons.** Past four or five
+  options, cycling means clicking eight times and watching the label to find the one
+  you want, and you cannot see what is on offer without visiting all of it.
+  - The second bar's Power picker, which offers nine.
+- Short lists keep cycling, which is still the better control for two or three - and
+  the arrows on each side now say which kind you are looking at.
+- The list sizes itself to its contents and only grows a scroll bar when there is
+  something to scroll.
+
+## 0.10.0
+
+- **Controls say what they do.** A white triangle pointing down means a list drops
+  down; triangles on both sides mean the button steps through its options. Those were
+  the same rectangle with the same text in it, and the only way to tell them apart was
+  to click one and find out.
+- The marker only ever goes on a control that really behaves that way. One wearing the
+  wrong arrow would be worse than one wearing none, because the marker becomes the
+  thing misleading you.
+
+## 0.9.0
+
+- **Resource bars, on a new Resource bars tab.** Two of them, separate from the pips
+  and with their own positions. Pips are for a countable thing you spend in whole
+  units; a pool that refills on its own is a bar, and the two answer different
+  questions - a rogue needs combo points AND energy at the same time. Havoc has only
+  the second kind and until now got nothing at all.
+- **The primary bar needs no setting up.** It shows whatever this character actually
+  spends and follows spec and form on its own, so a druid gets Energy in cat and Rage
+  in bear with nothing to configure, and a spec added in a later patch gets whatever
+  it was given. There is deliberately no class table here: the client already answers
+  this question, and writing one down could only make it wrong.
+- **A second bar for classes that have two at once** - Shadow spends Insanity and
+  still has Mana; a resto druid in cat form has Energy and Mana. It stays hidden if
+  you do not have the power you picked, or if it is already the primary, so it can
+  never be a duplicate of the bar above it.
+- Both take the game's own colour for that power by default, both can be dragged
+  while the display is unlocked, and both use the font and number colour from the
+  Appearance tab so the whole display matches without setting the same thing twice.
+- Off by default. Nobody's existing display changes on upgrade.
+
+## 0.8.2
+
+- **The threshold line draws.** Its texture path had single backslashes where it needed
+  doubled ones, so Lua read B and W as bare B and W, the path became
+  "InterfaceButtonsWHITE8X8", and SetTexture was handed something that does not exist.
+  Nothing errors when that happens - the texture is simply never drawn, which is why
+  the line resolved correctly at 45% and painted nothing.
+
+## 0.8.1
+
+- **Fixed the threshold line not appearing.** It was a texture on the pip, and the
+  two fills are child FRAMES at higher frame levels - a child frame's textures draw
+  over the parent's whatever draw layer the parent's are on. So the line was painted
+  over by the bar's own backing and was never visible at all, filled or empty. It has
+  its own layer above both fills now, and is white at high alpha rather than black,
+  which reads on a lit bar as well as a dark one.
+- **Insanity marks itself at the cost of Shadow Word: Madness without being asked.**
+  The slider defaults to zero and zero means off, so a resource whose whole point is
+  a threshold shipped with no line and no hint there was one to turn on. Fifty is the
+  untalented cost and is used when the real cost cannot be read; the real cost wins
+  when it can, which is 45 with the talent that reduces it.
+- **/ncb diag reports the bar and its mark.** "I cannot see the line" has three causes
+  - not in bar mode, no threshold resolved, or resolved and drawn somewhere
+  unexpected - and they look identical on screen.
+
+## 0.8.0
+
+- **The Insanity mark follows Shadow Word: Madness's real cost.** It costs 50, or 45
+  with the talent that reduces it, so a line drawn at a remembered 50 would be wrong
+  for anybody who took it. The cost is read from the client and the line moves when
+  the talent does - it is part of what gets worked out when the resource is resolved,
+  and a talent change already triggers that.
+- The "Mark at" percentage stays as the fallback, and is what you get on a client
+  whose spell names are not English: the lookup is by name, and a registry can only
+  carry one of them.
+
+## 0.7.1
+
+- **Fixed the number never appearing.** Turning bar mode on set the count to a mode
+  that does not exist, and the layout names three modes and silently did nothing for
+  anything else - so the font string was left with no anchor at all: still "shown",
+  drawing nowhere. The mode is right now, and the layout falls back to the middle
+  rather than to nothing, because a number in the wrong place is a readable failure
+  and an invisible one is not.
+- **Pip width goes up to 250.** A pip and a bar are the same control, and a bar wants
+  the width of a resource bar rather than the width of one combo point.
+- **A threshold line can be drawn on the bar** - "Mark at", under the resource. Set it
+  to 50 for the half-bar point a Shadow priest spends at. It is a percentage of the
+  bar rather than a number of resource units, so it cannot be wrong about what the
+  units are: Insanity is shown as 0-100 and has been stored at ten times that, and
+  half the bar is half the bar either way. Drawn over the fill so it stays readable
+  once the bar passes it, and measured from the end the bar fills from so it means
+  the same thing whichever direction you have it pointed.
+- The line is offered in bar mode only. On a row of pips the boundary between one pip
+  and the next already is the mark, and a line inside one of them would be a second,
+  competing division.
+
+## 0.7.0
+
+- **Any resource can be drawn as one bar instead of a row of pips.** Per resource,
+  under Resource colours. Pips answer "how many have I got", which is right for five
+  combo points; a bar answers "how full am I", which is right for something like
+  Insanity that moves continuously and has no meaningful single point. Both are
+  legitimate readings, so it is a choice rather than a judgement made for you.
+- The bar spans exactly what the pips spanned, so switching between the two changes
+  the shape of the display without moving it or changing how much room it takes.
+- Turning it on switches the number on if you had it off, and says so. A bar with
+  nothing to read on it is the one thing the option is not for - but the number is a
+  shared setting, so it is done out loud rather than quietly.
+- Off by default everywhere. Pips are what this addon is, and changing what an
+  existing setup looks like on upgrade is not a favour.
+
+## 0.6.0
+
+- **Shadow Priest is supported: Insanity.** A pip is one Devouring Plague rather than
+  one point - Insanity runs 0-100 and a hundred pips is wallpaper, not a readout.
+  Fifty is what a cast costs, so two pips answer the question a Shadow priest actually
+  asks: have I got one banked, and how close is the next. The pip in progress
+  part-fills exactly as a Destruction shard does, and the number beside them still
+  reads in raw Insanity because that is what the rest of the game shows.
+- Discipline and Holy get nothing rather than a row of pips that can never fill.
+- How many raw units make a pip can now be measured off the client instead of written
+  down. Insanity is displayed as 0-100 and has been stored at ten times that, so a
+  hard-coded fifty would have been silently wrong on whichever of the two this build
+  uses; it is read from UnitPowerMax and halved.
+
+## 0.5.0
+
+- **Settings are per character now.** A tweak on one character no longer changes
+  another. Not shared profiles - nothing is linked at all: a character's settings are
+  seeded once, from the starting point or another character, and are its own from then
+  on. Copying is something you do, not something you leave switched on.
+  - On your first login after this, the settings you have become this character's AND
+    the starting point every other character seeds from, so nobody arrives to an empty
+    screen.
+  - Copy between characters from nugsSuite's Characters tab, which drives every nugs
+    addon at once.
+  - Named profiles are unchanged and stay account-wide. They answer a different
+    question - "I built a look once and want it on demand" - and a library only one
+    character could see would be useless for exactly that.
+- Profile strings now carry this character's settings rather than the account table.
+  Left as it was, exporting would have put every character you own into a string meant
+  to describe one of them.
+
 ## 0.4.12
 
 - **Fixed: anchors could be left unlocked during a fight.** Placing mode puts a drag

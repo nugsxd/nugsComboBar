@@ -55,6 +55,7 @@ local SPEC = {
     DH_VENGEANCE     = 2,
     DH_DEVOURER      = 3,
     WARLOCK_DESTRO   = 3,
+    PRIEST_SHADOW    = 3,
     EVOKER_AUGMENT   = 3,
 }
 
@@ -141,6 +142,52 @@ local function DevourerCap()
 end
 NCB.DevourerCap = DevourerCap
 
+-- Where a threshold line belongs on the bar, as a fraction of it.
+--
+-- Prefers a SPELL's actual cost over a number somebody typed, because the cost is not
+-- a constant: Shadow Word: Madness costs 50 Insanity, or 45 with the talent that
+-- reduces it, and a mark drawn at a remembered 50 would be wrong for anybody who took
+-- it. Asking the client means the line moves when the talent does.
+--
+-- Falls back to the manual percentage, which is also the answer on a client whose
+-- spell names are not English - the lookup below is by name, and the registry can
+-- only carry one.
+local function MarkFraction(res, cfg)
+    if not (res and cfg) then return nil end
+
+    local spell = res.markSpell
+    if spell and C_Spell and C_Spell.GetSpellPowerCost and res.powerType then
+        local id = spell
+        if type(id) == "string" and C_Spell.GetSpellInfo then
+            local ok, info = pcall(C_Spell.GetSpellInfo, spell)
+            id = (ok and info and info.spellID) or nil
+        end
+
+        if id then
+            local ok, costs = pcall(C_Spell.GetSpellPowerCost, id)
+            if ok and type(costs) == "table" then
+                for _, entry in ipairs(costs) do
+                    local cost = Plain(entry and entry.cost)
+                    if cost and cost > 0 and entry.type == res.powerType then
+                        local max = Plain(UnitPowerMax("player", res.powerType))
+                        if max and max > 0 then return cost / max end
+                    end
+                end
+            end
+        end
+    end
+
+    local at = tonumber(cfg.markAt) or 0
+    if at > 0 and at < 100 then return at / 100 end
+
+    -- A resource that has an obvious threshold gets a line without anybody setting
+    -- one. The slider defaults to zero and a zero means "off", so a resource whose
+    -- whole point is a threshold would otherwise ship with no line and no clue that
+    -- there was one to turn on.
+    if res.markDefault then return res.markDefault / 100 end
+    return nil
+end
+
 local function CastCountValue(res)
     if not GetSpellCastCount then return 0 end
     local ok, count = pcall(GetSpellCastCount, res.spellID)
@@ -197,6 +244,33 @@ NCB.RESOURCES = {
         max = 5, hardMax = 5, scale = 10,
         color = { 0.62, 0.38, 0.94 },
         blizz = { "WarlockPowerFrame" },
+    },
+    {
+        -- Shadow. A pip is one Devouring Plague, not one point.
+        --
+        -- Insanity runs 0-100 and a hundred pips is not a readout, it is wallpaper.
+        -- Fifty is what a cast costs, so two pips answer the question a Shadow priest
+        -- actually asks - have I got one banked, and how close is the next - with the
+        -- pip in progress part-filling exactly as a Destruction shard does. The number
+        -- beside them still reads in raw Insanity, because that is what the rest of
+        -- the game shows you.
+        key = "insanity", label = "Insanity", short = "Insanity",
+        powerType = PT.Insanity or 13, Value = PowerValue,
+        CountValue = PowerValue,
+        max = 2, hardMax = 2,
+        -- The spender the bar is really about, so a threshold line can follow its
+        -- real cost rather than a number that goes stale with a talent.
+        markSpell = "Shadow Word: Madness",
+        -- What it costs untalented, used when the cost cannot be read - on a client
+        -- whose spell names are not English, or before the spellbook is loaded.
+        markDefault = 50,
+        -- Half the bar per pip, measured rather than assumed. See PipShape.
+        Scale = function()
+            local max = Plain(UnitPowerMax("player", PT.Insanity or 13))
+            if max and max > 0 then return max / 2 end
+            return 50
+        end,
+        color = { 0.52, 0.32, 0.88 },
     },
     {
         key = "arcaneCharges", label = "Arcane Charges", short = "Charges",
@@ -315,6 +389,11 @@ local function ResolveKey(class, spec)
     elseif class == "HUNTER" then
         return (spec == SPEC.HUNTER_SURVIVAL) and "spearTip" or nil
 
+    elseif class == "PRIEST" then
+        -- Discipline and Holy have no Insanity at all, so they get nothing rather
+        -- than a row of pips that can never fill.
+        return (spec == SPEC.PRIEST_SHADOW) and "insanity" or nil
+
     elseif class == "DEMONHUNTER" then
         if spec == SPEC.DH_VENGEANCE then return "soulCleave" end
         if spec == SPEC.DH_DEVOURER  then return "devourerSouls" end
@@ -343,20 +422,41 @@ local lastGoodMax = {}
 -- Pip count and scale together, because for a dynamic resource they trade off:
 -- a cap small enough to read gets one pip each, and a larger one collapses to a
 -- single pip that fills like a bar (scale = the whole cap).
-local function PipShape(res)
+-- Whether this resource is set to draw as one bar rather than a row of pips.
+--
+-- Pips answer "how many have I got" and are the right shape for five combo points.
+-- A bar answers "how full am I", which is the right shape for something like
+-- Insanity that moves continuously and has no meaningful individual point. Both are
+-- legitimate readings of a class resource, so it is a per-resource choice rather
+-- than a judgement made here.
+local function BarMode(res)
+    local cfg = res and NCB.ResourceConfig and NCB.ResourceConfig(res.key)
+    return (cfg and cfg.barMode) and true or false
+end
+
+-- The shape this resource has on its own, before any bar-mode preference.
+local function NaturalShape(res)
     if not res then return 0, 1 end
     if res.Cap then
         local cap = res.Cap()
         if cap <= NCB.PIP_LIMIT then return cap, 1 end
         return 1, cap
     end
+    -- A scale the client answers rather than a number written down here. Used where
+    -- the raw units behind a resource are not knowable from a wiki: Insanity is shown
+    -- as 0-100 but has been stored at ten times that, and a hard-coded 50 would be
+    -- silently wrong on whichever of the two this build uses.
+    if res.Scale then
+        local scale = res.Scale()
+        if scale and scale > 0 then return nil, scale end
+    end
     return nil, res.scale or 1
 end
 
-local function PipCount(res)
+local function NaturalCount(res)
     if not res then return 0 end
 
-    local dynamic = PipShape(res)
+    local dynamic = NaturalShape(res)
     if dynamic then return dynamic end
 
     -- Talents raise the combo point cap, and the choice is whether that adds pips
@@ -378,6 +478,28 @@ local function PipCount(res)
     return math.min(lastGoodMax[res.key] or res.max or 0, cap or math.huge)
 end
 
+-- Bar mode is the natural shape collapsed into a single pip that spans the lot.
+--
+-- Deliberately built ON TOP of the pip layout rather than beside it. The display
+-- already draws one pip filling like a bar - that is what a resource too large to
+-- read as pips falls back to - so a bar is not a second way of drawing, it is the
+-- same way with a count of one. Nothing in Display.lua had to learn about it.
+local function PipShape(res)
+    if not res then return 0, 1 end
+
+    local pips, scale = NaturalShape(res)
+    if not BarMode(res) then return pips, scale end
+
+    local count = pips or NaturalCount(res)
+    return 1, math.max(1, count * (scale or 1))
+end
+
+local function PipCount(res)
+    if not res then return 0 end
+    if BarMode(res) then return 1 end
+    return NaturalCount(res)
+end
+
 function Resources:Detect()
     local _, class = UnitClass("player")
     local spec = GetSpecialization and GetSpecialization() or nil
@@ -396,6 +518,19 @@ function Resources:Detect()
     -- How many raw units one pip spans. Static for everything except Devourer.
     local _, scale = PipShape(res)
     self.scale = scale or 1
+
+    -- How many pips' worth of WIDTH the row occupies.
+    --
+    -- Normally one per pip. In bar mode there is a single pip, and without this it
+    -- would be drawn one pip wide - a stub, not a bar. Spanning what the pips would
+    -- have spanned means switching between the two modes changes the shape of the
+    -- display without moving it or changing how much room it takes, which is the
+    -- behaviour somebody toggling back and forth to compare them expects.
+    self.barSpan = (res and BarMode(res)) and math.max(1, NaturalCount(res)) or 1
+
+    -- Part of the resolved shape, so a cost that moves because a talent changed
+    -- redraws the line instead of leaving it where it was.
+    self.markFrac = MarkFraction(res, res and NCB.ResourceConfig(res.key))
 
     -- Brewmaster's Stagger rides alongside whatever else is on screen, so it is
     -- resolved separately rather than competing for the one resource slot.
@@ -561,12 +696,14 @@ end
 -- Re-resolve which resource is active and rebuild the pips if the answer changed.
 function Resources:Refresh()
     local before, beforeMax, beforeScale = self.active, self.maxPips, self.scale
+    local beforeMark = self.markFrac
     self:Detect()
     self:ApplyBlizzardVisibility()
 
     -- Scale is in the comparison for Devourer: entering Void Metamorphosis changes
     -- the cap without changing the resource, and the pips have to be re-ranged.
-    if self.active ~= before or self.maxPips ~= beforeMax or self.scale ~= beforeScale then
+    if self.active ~= before or self.maxPips ~= beforeMax or self.scale ~= beforeScale
+       or self.markFrac ~= beforeMark then
         NCB.Display:Rebuild()
     else
         NCB.Display:Update()
@@ -589,6 +726,22 @@ function NCB.Diagnostics()
     else
         print(("  resource: |cffffd479%s|r (%s), pips: |cffffd479%d|r")
             :format(res.label, res.key, Resources.maxPips))
+
+        -- The bar and its threshold line, because "I cannot see the mark" has three
+        -- possible causes - not in bar mode, no fraction resolved, or resolved and
+        -- drawn somewhere unexpected - and they are indistinguishable on screen.
+        local cfg = NCB.ResourceConfig(res.key)
+        print(("  bar mode: |cffffd479%s|r   span: |cffffd479%s|r")
+            :format(tostring(cfg and cfg.barMode and true or false),
+                    tostring(Resources.barSpan)))
+        if Resources.markFrac then
+            print(("  mark at: |cffffd479%.1f%%|r of the bar%s")
+                :format(Resources.markFrac * 100,
+                        res.markSpell and ("  (following " .. tostring(res.markSpell) .. ")")
+                                       or ""))
+        else
+            print("  mark: |cff808080none|r - set 'Mark at' under this resource.")
+        end
         local value = Resources:Value()
         if NCB.IsSecret(value) then
             print("  value: |cff8cd2ffsecret|r - fed straight to the pips, which is fine.")

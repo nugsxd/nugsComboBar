@@ -143,6 +143,16 @@ NCB.EMPTY_STYLES = {
     { key = "none",   label = "Nothing at all" },
 }
 
+-- What a resource bar prints on itself. "value" works even when the client hands
+-- back a secret number: it can be displayed, it just cannot be divided, which is why
+-- percent and both fall back to it rather than showing nothing.
+NCB.POWER_TEXT_MODES = {
+    { key = "none",    label = "No number" },
+    { key = "value",   label = "Current value" },
+    { key = "percent", label = "Percent" },
+    { key = "both",    label = "Current / max" },
+}
+
 NCB.COUNT_MODES = {
     { key = "none",    label = "No number" },
     { key = "center",  label = "Number in the middle" },
@@ -170,6 +180,51 @@ NCB.defaults = {
     minimapHidden = false,
     minimapAngle  = 200,
 
+
+    -- The primary resource bar - whatever this character spends.
+    power = {
+        enabled       = false,   -- opt in; nobody's existing display changes on upgrade
+        anchor        = { point = "CENTER", relPoint = "CENTER", x = 0, y = -170, scale = 1.00 },
+        width         = 200,
+        height        = 14,
+        texture       = "Blizzard",
+        useClassColor = true,    -- the colour the game uses for that power
+        color         = { 0.35, 0.72, 1.00 },
+        textMode      = "value", -- none | value | percent | both
+        showBorder    = true,
+        backdropAlpha = 0.6,
+        hideWhenFull  = false,
+        -- Off means the number uses the pip row's font (Appearance tab). Switching it
+        -- on copies the pip row's current font into the three below, so nothing jumps
+        -- until one of them is changed.
+        ownFont       = false,
+        font          = "Friz Quadrata TT",
+        fontSize      = 13,
+        fontOutline   = "OUTLINE",
+    },
+
+    -- A second resource bar, for a class that has two at once.
+    power2 = {
+        enabled       = false,   -- opt in; nobody's existing display changes on upgrade
+        anchor        = { point = "CENTER", relPoint = "CENTER", x = 0, y = -190, scale = 1.00 },
+        width         = 200,
+        height        = 14,
+        texture       = "Blizzard",
+        useClassColor = true,    -- the colour the game uses for that power
+        color         = { 0.35, 0.72, 1.00 },
+        textMode      = "value", -- none | value | percent | both
+        showBorder    = true,
+        backdropAlpha = 0.6,
+        hideWhenFull  = false,
+        ownFont       = false,   -- see power above
+        font          = "Friz Quadrata TT",
+        fontSize      = 13,
+        fontOutline   = "OUTLINE",
+        -- Which power the second bar shows. Mana by default: a caster with a
+        -- different primary almost always still has mana, and that is the pairing
+        -- this exists for.
+        powerType     = "mana",
+    },
     anchor = {
         point   = "CENTER",
         relPoint= "CENTER",
@@ -270,30 +325,37 @@ local function CopyDefaults(dst, src)
 end
 NCB.CopyDefaults = CopyDefaults
 
-local function InitDB()
-    nugsComboBarDB     = CopyDefaults(nugsComboBarDB     or {}, NCB.defaults)
-    nugsComboBarCharDB = CopyDefaults(nugsComboBarCharDB or {}, NCB.charDefaults)
-
+-- Bring the settings into a state the rest of the addon can rely on. Run at login
+-- and again whenever a profile is copied in, because settings arriving by copy have
+-- had exactly the same chance to be missing a block as settings read off disk.
+local function NormaliseSettings()
     -- One settings block per registered resource, seeded from the registry's own
     -- colour so a new resource added in a later patch lands with a sane default
     -- instead of white.
     for _, res in ipairs(NCB.RESOURCES) do
-        local cfg = nugsComboBarDB.resources[res.key] or {}
+        local cfg = NCB.db.resources[res.key] or {}
         cfg = CopyDefaults(cfg, {
             enabled      = true,
             hideBlizzard = true,
+            -- One bar instead of a row of pips. Off by default: pips are what this
+            -- addon is, and changing what an existing setup looks like on upgrade is
+            -- not a favour.
+            barMode      = false,
+            -- Where to draw a threshold line on the bar, as a PERCENTAGE of it.
+            -- Zero is off. Only drawn in bar mode - see StylePip for why.
+            markAt       = 0,
             color        = { res.color[1], res.color[2], res.color[3] },
             perPointColor= res.perPointColor and true or false,
         })
-        nugsComboBarDB.resources[res.key] = cfg
+        NCB.db.resources[res.key] = cfg
     end
 
     -- One-time colour repair. The at-max recolour and glow shipped gold, which is
     -- within a few hundredths of Holy Power's own gold - so on a Paladin both worked
     -- perfectly and neither was visible. Anyone still carrying the old shipped values
     -- is moved to the new near-white ones; anyone who picked their own keeps them.
-    if not nugsComboBarDB.fullColoursRepaired then
-        local L = nugsComboBarDB.look
+    if not NCB.db.fullColoursRepaired then
+        local L = NCB.db.look
         local function IsStill(c, r, g, b)
             return c and math.abs(c[1] - r) < 0.005
                      and math.abs(c[2] - g) < 0.005
@@ -305,12 +367,34 @@ local function InitDB()
         if IsStill(L.colorFullGlow, 1.00, 0.78, 0.25) then
             L.colorFullGlow = { 1.00, 0.97, 0.88 }
         end
-        nugsComboBarDB.fullColoursRepaired = true
+        NCB.db.fullColoursRepaired = true
     end
 
-    NCB.db   = nugsComboBarDB
+end
+
+local function InitDB()
+    -- Settings are per character. See nugsProfile.lua for why nothing is linked.
+    NCB.db = NCB.Profile:Init({
+        global   = "nugsComboBarDB",
+        defaults = NCB.defaults,
+        onApply  = function()
+            NormaliseSettings()
+            if NCB.Resources then NCB.Resources:Refresh() end
+            if NCB.Display then NCB.Display:Rebuild() end
+            if NCB.Power then NCB.Power:Rebuild() end
+            if NCB.RefreshOptions then NCB.RefreshOptions() end
+        end,
+    })
+
+    nugsComboBarCharDB = CopyDefaults(nugsComboBarCharDB or {}, NCB.charDefaults)
     NCB.char = nugsComboBarCharDB
-    nugsComboBarDB.profiles = nugsComboBarDB.profiles or {}
+
+    NormaliseSettings()
+
+    -- The named-profile store stays ACCOUNT-wide: a library only one character can
+    -- see would be useless for the one thing it exists for.
+    local account = NCB.Profile.account
+    account.profiles = account.profiles or {}
 end
 
 --------------------------------------------------------------------------------
@@ -350,7 +434,7 @@ NCB.TrimName = ProfileTrim
 
 function NCB.ProfileNames()
     local names = {}
-    for name in pairs(NCB.db.profiles or {}) do names[#names + 1] = name end
+    for name in pairs(NCB.Profile.account.profiles or {}) do names[#names + 1] = name end
     table.sort(names, function(a, b) return a:lower() < b:lower() end)
     return names
 end
@@ -362,18 +446,18 @@ function NCB.SaveProfile(name)
     for k, v in pairs(NCB.db) do
         if not PROFILE_SKIP[k] then snap[k] = ProfileDeepCopy(v) end
     end
-    NCB.db.profiles[name] = snap
-    NCB.db.activeProfile = name
+    NCB.Profile.account.profiles[name] = snap
+    NCB.Profile.account.activeProfile = name
     return true
 end
 
 function NCB.LoadProfile(name)
-    local snap = NCB.db.profiles and NCB.db.profiles[name]
+    local snap = NCB.Profile.account.profiles and NCB.Profile.account.profiles[name]
     if not snap then return false end
     for k, v in pairs(snap) do
         if not PROFILE_SKIP[k] then NCB.db[k] = ProfileDeepCopy(v) end
     end
-    NCB.db.activeProfile = name
+    NCB.Profile.account.activeProfile = name
     if NCB.Display and NCB.Display.Rebuild then NCB.Display:Rebuild() end
     if NCB.RefreshOptions then NCB.RefreshOptions() end
     return true
@@ -402,16 +486,16 @@ local function SameSettings(a, b)
 end
 
 function NCB.ProfileStatus()
-    local name = NCB.db.activeProfile
-    local stored = name and NCB.db.profiles and NCB.db.profiles[name]
+    local name = NCB.Profile.account.activeProfile
+    local stored = name and NCB.Profile.account.profiles and NCB.Profile.account.profiles[name]
     if not stored then return nil, false end
     return name, SameSettings(ProfileSnapshot(), stored)
 end
 
 function NCB.DeleteProfile(name)
     name = ProfileTrim(name)
-    if not (NCB.db.profiles and NCB.db.profiles[name]) then return false end
-    NCB.db.profiles[name] = nil
+    if not (NCB.Profile.account.profiles and NCB.Profile.account.profiles[name]) then return false end
+    NCB.Profile.account.profiles[name] = nil
     return true
 end
 
@@ -434,6 +518,13 @@ function NCB.ResetAll()
         NCB.db.resources[res.key] = CopyDefaults({}, {
             enabled      = true,
             hideBlizzard = true,
+            -- One bar instead of a row of pips. Off by default: pips are what this
+            -- addon is, and changing what an existing setup looks like on upgrade is
+            -- not a favour.
+            barMode      = false,
+            -- Where to draw a threshold line on the bar, as a PERCENTAGE of it.
+            -- Zero is off. Only drawn in bar mode - see StylePip for why.
+            markAt       = 0,
             color        = { res.color[1], res.color[2], res.color[3] },
             perPointColor= res.perPointColor and true or false,
         })
@@ -461,6 +552,13 @@ local function EffectiveDefaults()
         eff.resources[res.key] = CopyDefaults({}, {
             enabled      = true,
             hideBlizzard = true,
+            -- One bar instead of a row of pips. Off by default: pips are what this
+            -- addon is, and changing what an existing setup looks like on upgrade is
+            -- not a favour.
+            barMode      = false,
+            -- Where to draw a threshold line on the bar, as a PERCENTAGE of it.
+            -- Zero is off. Only drawn in bar mode - see StylePip for why.
+            markAt       = 0,
             color        = { res.color[1], res.color[2], res.color[3] },
             perPointColor= res.perPointColor and true or false,
         })
@@ -480,7 +578,9 @@ local function RegisterWithSuite()
             NCB.db.minimapHidden = not shown
             NCB.SetMinimapShown(shown)
         end,
-        GetDB      = function() return nugsComboBarDB, EffectiveDefaults() end,
+        -- This character's settings, not the account container.
+        GetDB      = function() return NCB.db, EffectiveDefaults() end,
+        Profile    = NCB.Profile,
         GetCharDB  = function() return nugsComboBarCharDB, NCB.charDefaults end,
         -- Where this button sits is nobody else's business, and fullColoursRepaired
         -- is a one-shot migration flag rather than a setting - carrying it would
@@ -505,7 +605,9 @@ events:SetScript("OnEvent", function(_, event, arg1)
         RegisterWithSuite()
 
     elseif event == "PLAYER_LOGIN" then
+        NCB.Profile:Attach()
         NCB.InitMinimap()
+        if NCB.Power then NCB.Power:Init() end
         NCB.Resources:Refresh()
         NCB.Display:Rebuild()
     end
