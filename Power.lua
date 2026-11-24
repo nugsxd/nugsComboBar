@@ -296,8 +296,10 @@ function NCB.Power:Init()
     -- that says so - it is what makes a druid's bar follow cat and bear with no
     -- table saying which is which.
     events:RegisterUnitEvent("UNIT_DISPLAYPOWER",   "player")
-    for _, event in ipairs({ "PLAYER_ENTERING_WORLD", "PLAYER_SPECIALIZATION_CHANGED",
-                             "UPDATE_SHAPESHIFT_FORM" }) do
+    -- Yours only: plainly registered, this fires for every party member, arena
+    -- opponent and nameplate too, and each one restyled both bars.
+    pcall(events.RegisterUnitEvent, events, "PLAYER_SPECIALIZATION_CHANGED", "player")
+    for _, event in ipairs({ "PLAYER_ENTERING_WORLD", "UPDATE_SHAPESHIFT_FORM" }) do
         pcall(events.RegisterEvent, events, event)
     end
 

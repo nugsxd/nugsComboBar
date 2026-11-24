@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.14.1
+
+- **Other players' spec changes are ignored now.** The game announces a spec change
+  for every unit it knows about: party and raid members, arena opponents,
+  nameplates, your target. The addon was reacting to each one as if it were your
+  own swap, which restyled the resource display and both bars for each one. In a solo shuffle that is a dozen or so
+  every round. Only your own spec change counts now.
+
 ## 0.14.0
 
 - **The resource bars can have their own font.** Each bar on the Bars tab has a new

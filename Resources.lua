@@ -658,9 +658,12 @@ function Resources:Init()
     frame:RegisterUnitEvent("UNIT_DISPLAYPOWER",       "player")
     frame:RegisterUnitEvent("UNIT_AURA",               "player")
     frame:RegisterUnitEvent("UNIT_POWER_POINT_CHARGE", "player")
+    -- Yours only: plainly registered, this fires for every party member, arena
+    -- opponent and nameplate too.
+    pcall(frame.RegisterUnitEvent, frame, "PLAYER_SPECIALIZATION_CHANGED", "player")
 
     for _, event in ipairs({
-        "PLAYER_ENTERING_WORLD", "PLAYER_SPECIALIZATION_CHANGED",
+        "PLAYER_ENTERING_WORLD",
         "PLAYER_TALENT_UPDATE", "UPDATE_SHAPESHIFT_FORM", "SPELLS_CHANGED",
         "RUNE_POWER_UPDATE", "SPELL_UPDATE_CHARGES",
         "PLAYER_REGEN_ENABLED", "PLAYER_REGEN_DISABLED",
